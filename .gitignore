@@ -1,4 +1,5 @@
 # Data files
+data/aic/
 data/raw/
 data/processed/
 *.sqlite
