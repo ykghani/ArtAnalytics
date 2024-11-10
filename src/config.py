@@ -75,4 +75,4 @@ class Settings(BaseSettings):
 
 # Create global settings instance
 settings = Settings()
-log_level = LogLevel() 
+log_level = LogLevel("verbose") 

@@ -2,7 +2,8 @@ import sys
 import logging
 from pathlib import Path 
 
-from src.config import settings, log_level
+from src.config import settings
+from src.config import LogLevel
 from src.download import (
     AICApiClient, 
     ArtworkDownloader, 
@@ -58,9 +59,10 @@ def main():
     project_root = Path(__file__).parent
     settings.initialize_paths(project_root)
     
-    #Setup logging
-    setup_logging(settings.LOGS_DIR)
-    logging.info(f"Starting AIC artwork download process...")
+    #Setup logging with configured level
+    setup_logging(settings.LOGS_DIR, settings.LOG_LEVEL)
+    if settings.LOG_LEVEL != LogLevel.NONE: 
+        logging.info(f"Starting AIC artwork download process...")
 
     
     #Initialize components
