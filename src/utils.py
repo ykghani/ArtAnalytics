@@ -4,21 +4,22 @@ import logging
 from typing import Dict, Any
 import json
 import re
+from .config import settings
 
 def get_project_root() -> Path:
     """Get the absolute path to the project root directory."""
-    return Path(__file__).parent.parent
+    # return Path(__file__).parent.parent
+    root = Path(__file__).parent.parent
+    settings.initialize_paths(root)
+    return root
 
 def setup_logging() -> None:
     """Configure logging for the application."""
-    log_dir = get_project_root() / 'logs'
-    log_dir.mkdir(exist_ok=True)
-    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(log_dir / 'aic_downloader.log'),
+            logging.FileHandler(settings.LOGS_DIR / 'aic_downloader.log'),
             logging.StreamHandler()
         ]
     )
@@ -40,6 +41,7 @@ def sanitize_filename(aic_id: str, title: str, artist: str, max_length: int = 25
     Returns:
         Sanitized filename with format: "{aic_id}_{truncated_title}_{artist}.jpg"
     """
+    
     # Remove invalid characters from title and artist
     def clean_text(text: str) -> str:
         # Remove invalid filename characters

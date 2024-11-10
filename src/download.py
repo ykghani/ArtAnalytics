@@ -8,7 +8,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path
 import logging
-from typing import Dict, Set, Union
+from typing import Dict, Set, Union, List, Optional
 import re
 
 from .utils import (
@@ -18,24 +18,37 @@ from .utils import (
     sanitize_filename
 )
 
+from .config import settings
+
 class AICDownloader:
+    '''
+    Downloads artwork from the Art Institute of Chicago API.
+    
+    Attributes:
+        OUTPUT_FOLDER (Path): Directory where downloaded images are saved
+        PROGRESS_FILE (Path): JSON file tracking download progress
+        SEARCH_URL (str): AIC search API endpoint
+        BASE_URL (str): AIC base API endpoint
+        USER_AGENT (str): User agent string for API requests
+        download_log (Dict[str, Union[List[int], Set[int], Dict[str, Dict[str, str]]]]): 
+            Tracks download progress and errors
+    '''
     def __init__(self):
         # Get project root and setup paths
         project_root = get_project_root()
-        data_dir = project_root / 'data'
         
         # Setup directories
-        self.OUTPUT_FOLDER = data_dir / 'raw' / 'AIC_Prints_and_Drawings'
-        self.PROGRESS_FILE = data_dir / 'processed' / 'processed_ids.json'
+        self.OUTPUT_FOLDER = settings.IMAGES_DIR
+        self.PROGRESS_FILE = settings.PROGRESS_FILE
         
-        # Ensure directories exist
-        ensure_directory(self.OUTPUT_FOLDER)
-        ensure_directory(self.PROGRESS_FILE.parent)
+        # # Ensure directories exist
+        # ensure_directory(self.OUTPUT_FOLDER)
+        # ensure_directory(self.PROGRESS_FILE.parent)
         
         # Setup API endpoints
-        self.SEARCH_URL = "https://api.artic.edu/api/v1/artworks/search"
-        self.BASE_URL = "https://api.artic.edu/api/v1/artworks"
-        self.USER_AGENT = "AIC-ArtDownloadBot/1.0 (yusuf.k.ghani@gmail.com)"
+        self.SEARCH_URL = settings.API_SEARCH_URL
+        self.BASE_URL = settings.API_BASE_URL
+        self.USER_AGENT = f"{settings.USER_AGENT} ({settings.CONTACT_EMAIL})"
         
         # Setup logging
         setup_logging()
@@ -51,15 +64,15 @@ class AICDownloader:
             "network_error": [],
             "image_processing_error": [],
             "other_error": {},
-            "all": set()
+            "all": set(),
+            "last_page": 0
         }
         
         # Setup session with retry strategy
         self.session = self._create_session()
         
         # Install cache
-        cache_file = data_dir / 'aic_cache'
-        requests_cache.install_cache(str(cache_file), backend='sqlite')
+        requests_cache.install_cache(str(settings.CACHE_FILE), backend='sqlite')
         
         # Load existing progress
         self._load_progress()
@@ -86,7 +99,11 @@ class AICDownloader:
                     self.download_log = json.load(f)
                     # Convert 'all' back to set from list
                     self.download_log['all'] = set(self.download_log['all'])
-                logging.info(f"Loaded progress file. {len(self.download_log['all'])} items previously processed.")
+                    
+                    if 'last_page' not in self.download_log:
+                        self.download_log['last_page'] = 0
+                    
+                logging.info(f"Loaded progress file. {len(self.download_log['all'])} items previously processed. Resuming from page {self.download_log['last_page'] + 1}")
             except json.JSONDecodeError:
                 logging.error("Error reading progress file. Starting fresh.")
                 self._save_progress()  # Create new progress file
@@ -149,8 +166,14 @@ class AICDownloader:
             logging.error(f"Error processing image for AIC ID {aic_id}: {str(e)}")
             self.log_status(aic_id, "image_processing_error", str(e))
 
-    def download_all_artwork(self) -> None:
-        """Download all public domain artwork from the Prints and Drawings department."""
+    def download_all_artwork(self, force_restart: bool = False) -> None:
+        """
+        Download all public domain artwork from the Prints and Drawings department.
+        
+        Args: 
+            force_restart(bool): If true, starts from page 1 regardless of previous progress
+        
+        """
         fields = ['id', 'title', 'artist_display', 'image_id', 'department_title']
         params = {
             'is_public_domain': 'true',
@@ -162,7 +185,7 @@ class AICDownloader:
         total_processed = len(self.download_log['all'])
         logging.info(f"Starting download. {total_processed} items already processed.")
         
-        page = 1
+        page = 1 if force_restart else self.download_log['last_page'] + 1
         while True:
             params['page'] = page
             
@@ -195,6 +218,9 @@ class AICDownloader:
                         art.get('artist_display', 'Unknown Artist')
                     )
                     time.sleep(1)  # Rate limiting
+                
+                self.download_log['last_page'] = page
+                self._save_progress()
                 
                 page += 1
                 time.sleep(1)  # Rate limiting between pages
