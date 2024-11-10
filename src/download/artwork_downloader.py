@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import logging
 import time
 from typing import Optional, Dict, List, Any
@@ -5,6 +6,24 @@ from typing import Optional, Dict, List, Any
 from .api_client import AICApiClient
 from .progress_tracker import ProgressTracker
 from .image_processor import ImageProcessor
+
+class BaseArtworkDownloader(ABC):
+    '''
+    Abstract base class for artwork downloaders
+    '''
+    
+    def __init__(
+        self, 
+        api_client: BaseMuseumApiClient,
+        progress_tracker: ProgressTracker, 
+        image_processor: ImageProcessor, 
+        rate_limit_delay: float = 1.0
+    ): 
+        self.api_client = api_client
+        self.progress_tracker = progress_tracker,
+        self.image_processor = image_processor,
+        
+
 
 class ArtworkDownloader:
     """Main orchestrator for downloading artwork."""
@@ -23,17 +42,25 @@ class ArtworkDownloader:
 
     def download_artwork(self, aic_id: int, img_id: str, title: str, artist: str) -> None:
         """Download and save a single artwork."""
+        artwork_info = f"[AIC ID: {aic_id} '{title} by {artist}]"
         try:
             if not img_id:
                 raise ValueError("No image ID available")
+            
+            logging.info(f"Starting download of {artwork_info }")
 
             image_data = self.api_client.get_image(img_id)
-            filename = self._generate_filename(aic_id, title, artist)
+            logging.info(f"Successfully downloaded image data for {artwork_info}")
             
+            filename = self._generate_filename(aic_id, title, artist)
             self.image_processor.save_image(image_data, filename)
+            
             self.progress_tracker.log_status(aic_id, "success")
+            logging.info(f"Successfully processed and saved {artwork_info} as '{filename}")
             
         except Exception as e:
+            error_msg = f"Failed to process {artwork_info}: {str(e)}"
+            logging.error(error_msg)
             self._handle_error(aic_id, str(e))
 
     def download_all_artwork(self, force_restart: bool = False) -> None:

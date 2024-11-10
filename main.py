@@ -2,16 +2,7 @@ import sys
 import logging
 from pathlib import Path 
 
-# from src.download import AICDownloader
-# from src.config import settings
-
-# from src.config import settings
-# from src.download.api_client import AICApiClient
-# from src.download.progress_tracker import ProgressTracker
-# from src.download.image_processor import ImageProcessor
-# from src.download.artwork_downloader import ArtworkDownloader
-
-from src.config import settings
+from src.config import settings, log_level
 from src.download import (
     AICApiClient, 
     ArtworkDownloader, 
@@ -19,16 +10,47 @@ from src.download import (
     ProgressTracker
 )
 
-def setup_logging(log_dir: Path) -> None: 
-    '''Configure logging for application'''
-    logging.basicConfig(
-        level= logging.INFO,
-        format= '%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(log_dir / 'aic_downloader.log'),
-            logging.StreamHandler()
-        ]
-    )
+def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
+    '''Configure logging for application based on specific log level'''
+    
+    #Define handler format
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    
+    #Create handlers
+    file_handler = logging.FileHandler(log_dir / 'aic_downloader.log')
+    console_handler = logging.StreamHandler()
+    
+    formatter = logging.Formatter(log_format)
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    #Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.handlers = [] #clear existing handlers
+    
+    #Setup logging levels
+    if log_level == LogLevel.NONE:
+        root_logger.setLevel(logging.CRITICAL + 1)
+    elif log_level == LogLevel.ERRORS_ONLY:
+        root_logger.setLevel(logging.ERROR)
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+    else:
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(file_handler)
+        root_logger.addHandler(console_handler)
+        
+    if log_level != LogLevel.NONE:
+        logging.info(f"Logging configured with level: {log_level}")
+    
+    # logging.basicConfig(
+    #     level= logging.INFO,
+    #     format= '%(asctime)s - %(levelname)s - %(message)s',
+    #     handlers=[
+    #         logging.FileHandler(log_dir / 'aic_downloader.log'),
+    #         logging.StreamHandler()
+    #     ]
+    # )
 
 def main():
     

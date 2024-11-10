@@ -2,6 +2,14 @@ from pathlib import Path
 from pydantic import EmailStr
 from pydantic_settings import BaseSettings  # Changed this import
 from typing import Optional
+from enum import Enum
+
+class LogLevel(str, Enum): 
+    '''Enum for logging levels'''
+    NONE = "none"
+    VERBOSE = "verbose"
+    ERRORS_ONLY = "errors_only"
+
 
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
@@ -11,6 +19,9 @@ class Settings(BaseSettings):
     API_SEARCH_URL: str = "https://api.artic.edu/api/v1/artworks/search"
     USER_AGENT: str = "AIC-ArtDownloadBot/1.0"
     CONTACT_EMAIL: str = "yusuf.k.ghani@gmail.com"
+    
+    #Logging configuration
+    LOG_LEVEL: LogLevel = LogLevel.VERBOSE
     
     # File System Configuration
     PROJECT_ROOT: Optional[Path] = None
@@ -64,3 +75,4 @@ class Settings(BaseSettings):
 
 # Create global settings instance
 settings = Settings()
+log_level = LogLevel() 
