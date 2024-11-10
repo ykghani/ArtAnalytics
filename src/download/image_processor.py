@@ -15,7 +15,7 @@ class ImageProcessor:
             image = Image.open(BytesIO(image_data))
             filepath = self.output_folder / filename
             image.save(filepath)
-            logging.info(f"Successfully saved image: {filename}")
+            # logging.info(f"Successfully saved image: {filename}")
         except Exception as e: 
             logging.error(f"Error saving image {filename}: {str(e)}")
             raise
