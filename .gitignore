@@ -1,4 +1,5 @@
 # Data files
+artic-api-data
 data/aic/
 data/raw/
 data/processed/
@@ -31,3 +32,4 @@ notebooks/.ipynb_checkpoints
 
 # Mac OS files
 .DS_Store
+artic-api-data
