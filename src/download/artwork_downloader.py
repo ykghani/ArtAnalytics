@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import logging
 import time
 from typing import Optional, Dict, List, Any
+from pathlib import Path
 
 from .api_client import AICApiClient
 from .progress_tracker import ProgressTracker
@@ -16,12 +17,38 @@ class ArtworkDownloader:
         api_client: AICApiClient,
         progress_tracker: ProgressTracker,
         image_processor: ImageProcessor,
-        rate_limit_delay: float = 1.0
+        rate_limit_delay: float = 1.0,
+        max_downloads: Optional[int] = None, 
+        max_storage_gb: Optional[float] = None
     ):
         self.api_client = api_client
         self.progress_tracker = progress_tracker
         self.image_processor = image_processor
         self.rate_limit_delay = rate_limit_delay
+        self.max_downloads = max_downloads
+        self.max_storage_bytes = int(max_storage_gb * 1024 * 1024 * 1024) if max_storage_gb else None
+        self._download_count = 0
+        self._total_size_bytes = 0
+    
+    def _check_limits(self, new_size_bytes: int = 0) -> bool:
+        '''
+        Checks if downloading another image would exceed capactiy limits 
+        '''
+        if self.max_downloads and self._download_count >= self.max_downloads:
+            logging.warning(f"Maximum download count ({self.max_downloads}) reached")
+            return False
+
+        if self.max_storage_bytes: 
+            projected_total = self._total_size_bytes + new_size_bytes
+            if projected_total > self.max_storage_bytes:
+                logging.warning(
+                    "Max storage limit reached."
+                    f"({self._total_size_bytes / (1024**3):.2f}GB / {self.max_storage_bytes / (1024**3):.2f}GB)"
+                )
+                return False
+        
+        return True
+        
 
     def download_artwork(self, aic_id: int, img_id: str, title: str, artist: str) -> None:
         """Download and save a single artwork."""
@@ -32,8 +59,17 @@ class ArtworkDownloader:
 
             image_data = self.api_client.get_image(img_id)
             
+            #Check size limits
+            image_size = len(image_data)
+            if not self._check_limits(image_size):
+                self.progress_tracker.log_status(aic_id, "skipped", "Download limits reached")
+                return
+            
             filename = self._generate_filename(aic_id, title, artist)
             self.image_processor.save_image(image_data, filename)
+            
+            self._download_count += 1
+            self._total_size_bytes += image_size
             
             self.progress_tracker.log_status(aic_id, "success")
             logging.info(f"Successfully processed and saved {aic_id} as '{filename}")
@@ -45,7 +81,12 @@ class ArtworkDownloader:
 
     def download_all_artwork(self, force_restart: bool = False) -> None:
         """Download all public domain artwork from Prints and Drawings department."""
-        logging.info("Starting download_all_artwork process")
+        logging.info(
+            f"Starting download_all_artwork process with limits: "
+            f"max_downloads={self.max_downloads}, "
+            f"max_storage_gb={self.max_storage_bytes/1024**3 if self.max_storage_bytes else 'None'}GB"
+        )
+        
         params = {
             'is_public_domain': 'true',
             'department_title': 'Prints and Drawings',
