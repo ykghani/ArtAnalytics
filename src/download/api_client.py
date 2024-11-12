@@ -19,9 +19,10 @@ class AICApiClient:
         session = Session()
         retry_strategy = Retry(
             total=5,
-            backoff_factor=1,
+            backoff_factor= 2,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["HEAD", "GET", "OPTIONS"]
+            allowed_methods=["HEAD", "GET", "OPTIONS"],
+            respect_retry_after_header= True
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
@@ -40,7 +41,8 @@ class AICApiClient:
         response = self.session.get(
             f"{self.base_url}/{aic_id}",
             params={'fields': fields},
-            headers=self.headers
+            headers=self.headers,
+            timeout= (5, 30)
         )
         response.raise_for_status()
         return response.json()['data']

@@ -81,6 +81,10 @@ class ArtworkDownloader:
 
     def download_all_artwork(self, force_restart: bool = False) -> None:
         """Download all public domain artwork from Prints and Drawings department."""
+        
+        consecutive_errors = 0
+        MAX_CONSECUTIVE_ERRORS = 5
+        
         logging.info(
             f"Starting download_all_artwork process with limits: "
             f"max_downloads={self.max_downloads}, "
@@ -111,12 +115,19 @@ class ArtworkDownloader:
                 self.progress_tracker.update_page(page)
                 
                 page += 1
+                consecutive_errors = 0 
                 time.sleep(self.rate_limit_delay)
                 
             except Exception as e:
+                consecutive_errors += 1
                 logging.error(f"Error processing page {page}: {str(e)}")
-                time.sleep(5)  # Longer delay on error
-                continue
+                
+                if consecutive_errors > MAX_CONSECUTIVE_ERRORS: 
+                    logging.error("Too many consecutive errors. Stopping download")
+                    raise
+                
+                wait_time = min(300, self.rate_limit_delay * (2 ** consecutive_errors))
+                time.sleep(wait_time)
 
     def _process_page(self, artworks: List[Dict[str, Any]]) -> None:
         """Process a page of artwork data."""
