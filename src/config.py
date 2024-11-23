@@ -1,7 +1,7 @@
 from pathlib import Path
-from pydantic import EmailStr
-from pydantic_settings import BaseSettings  # Changed this import
-from typing import Optional
+from pydantic import EmailStr, Field
+from pydantic_settings import BaseSettings  
+from typing import Optional, Dict
 from enum import Enum
 
 class LogLevel(str, Enum): 
@@ -10,61 +10,101 @@ class LogLevel(str, Enum):
     VERBOSE = "verbose"
     ERRORS_ONLY = "errors_only"
 
+class MuseumConfig(BaseSettings):
+    '''Configurations for specific museums'''
+    api_base_url: str = Field(...)
+    api_version: str = Field(default="v1")
+    rate_limit: float = Field(default=1.0)
+    user_agent: str = Field(...)
+    contact_email: EmailStr = Field(...)
+    api_key: Optional[str] = Field(default=None)
+
+    class Config:
+        validate_assignment = True
+        extra = "allow"
 
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
     
-    # API Configuration
-    API_BASE_URL: str = "https://api.artic.edu/api/v1/artworks"
-    API_SEARCH_URL: str = "https://api.artic.edu/api/v1/artworks/search"
-    USER_AGENT: str = "AIC-ArtDownloadBot/1.0"
-    CONTACT_EMAIL: str = "yusuf.k.ghani@gmail.com"
+    # Initialize museums configs
+    museums: Dict[str, MuseumConfig] = Field(
+        default_factory= lambda: {
+            'aic': MuseumConfig(
+                api_base_url= "https://api.artic.edu/api/v1/artworks",
+                user_agent= "AIC-ArtDownloadBot/1.0",
+                contact_email= "yusuf.k.ghani@gmail.com"
+            )
+        }
+    )
     
     #Logging configuration
-    LOG_LEVEL: LogLevel = LogLevel.VERBOSE
+    log_level: LogLevel = Field(default=LogLevel.VERBOSE)
     
     # File System Configuration
-    PROJECT_ROOT: Optional[Path] = None
-    AIC_DIR: Optional[Path] = None
-    CACHE_DIR: Optional[Path] = None
-    IMAGES_DIR: Optional[Path] = None
-    LOGS_DIR: Optional[Path] = None
-    CACHE_FILE: Optional[Path] = None
-    PROGRESS_FILE: Optional[Path] = None
+    project_root: Optional[Path] = Field(default=None)
+    data_dir: Optional[Path] = Field(default=None)
+    cache_dir: Optional[Path] = Field(default=None)
+    images_dir: Optional[Path] = Field(default=None)
+    logs_dir: Optional[Path] = Field(default=None)
+    cache_file: Optional[Path] = Field(default=None)
+    
+    #Museum-specific directories
+    museum_dirs: Dict[str, Path] = Field(default_factory=dict)
     
     # Download Configuration
-    BATCH_SIZE: int = 100
-    RATE_LIMIT_DELAY: float = 1.0  # seconds
-    ERROR_RETRY_DELAY: float = 5.0  # seconds
-    MAX_RETRIES: int = 5
+    batch_size: int = Field(default=100)
+    rate_limit_delay: float = Field(default=1.0)
+    error_retry_delay: float = Field(default=5.0)
+    max_retries: int = Field(default=5)
+    max_downloads: Optional[int] = Field(default=None)
+    max_storage_gb: Optional[float] = Field(default=None)
     
     def initialize_paths(self, project_root: Path) -> None:
         """Initialize path configurations based on project root."""
-        self.PROJECT_ROOT = project_root
+        self.project_root = project_root
+        self.data_dir = project_root / 'data'
         
-        # Set up main AIC directory
-        self.AIC_DIR = project_root / 'data' / 'aic'
+        #Setup shared directories
+        self.cache_dir = self.data_dir / 'cache'
+        self.logs_dir = self.data_dir / 'logs'
         
-        # Set up subdirectories
-        self.CACHE_DIR = self.AIC_DIR / 'cache'
-        self.IMAGES_DIR = self.AIC_DIR / 'images'
-        self.LOGS_DIR = self.AIC_DIR / 'logs'
+        #Museum specific directories
+        self.museum_dirs = {
+            'aic': self.data_dir / 'aic',
+            'met': self.data_dir / 'met'
+        }
         
-        # Set up files
-        self.CACHE_FILE = self.AIC_DIR / 'aic_cache'  # sqlite extension added by requests_cache
-        self.PROGRESS_FILE = self.AIC_DIR / 'processed_ids.json'
+        for museum, base_dir in self.museum_dirs.items():
+            (base_dir / 'images').mkdir(parents=True, exist_ok=True)
+            (base_dir / 'cache').mkdir(parents=True, exist_ok=True)
         
         # Ensure all directories exist
         self._ensure_directories()
     
+    def get_museum_paths(self, museum_id: str) -> Dict[str, Path]: 
+        '''Get paths for a specific museum'''
+        if museum_id not in self.museum_dirs: 
+            raise ValueError(f"Unknown museum ID: {museum_id}")
+        
+        base_dir = self.museum_dirs[museum_id]
+        museum_cache = base_dir / 'cache'
+        
+        return {
+            'base': base_dir,
+            'images': base_dir / 'images',
+            'cache': museum_cache,
+            'processed_ids': museum_cache / 'processed_ids.json'
+        }
+    
     def _ensure_directories(self) -> None:
         """Create necessary directories if they don't exist."""
         directories = [
-            self.AIC_DIR,
-            self.CACHE_DIR,
-            self.IMAGES_DIR,
-            self.LOGS_DIR
+            self.data_dir,
+            self.cache_dir, 
+            self.logs_dir,
+            *self.museum_dirs.values()
         ]
+        
         for directory in directories:
             if directory:  # Check if not None before creating
                 directory.mkdir(parents=True, exist_ok=True)
@@ -72,7 +112,8 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = 'allow'
 
 # Create global settings instance
 settings = Settings()
-log_level = LogLevel("verbose") 
+log_level = LogLevel("verbose")

@@ -1,102 +1,105 @@
-from abc import ABC, abstractmethod
 import logging
 import time
 from typing import Optional, Dict, List, Any
 from pathlib import Path
+import requests
 
-from .api_client import AICApiClient
+from ..museums.base import MuseumAPIClient, MuseumImageProcessor
+from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import ProgressTracker
-from .image_processor import ImageProcessor
-from ..utils import sanitize_filename
 
 class ArtworkDownloader:
-    """Main orchestrator for downloading artwork."""
+    """Generic artwork downloader that works with any museum API client."""
     
     def __init__(
         self,
-        api_client: AICApiClient,
+        client: MuseumAPIClient,
+        image_processor: MuseumImageProcessor,
         progress_tracker: ProgressTracker,
-        image_processor: ImageProcessor,
-        rate_limit_delay: float = 1.0,
-        max_downloads: Optional[int] = None, 
+        max_downloads: Optional[int] = None,
         max_storage_gb: Optional[float] = None
     ):
-        self.api_client = api_client
-        self.progress_tracker = progress_tracker
+        self.client = client
         self.image_processor = image_processor
-        self.rate_limit_delay = rate_limit_delay
+        self.progress_tracker = progress_tracker
         self.max_downloads = max_downloads
         self.max_storage_bytes = int(max_storage_gb * 1024 * 1024 * 1024) if max_storage_gb else None
         self._download_count = 0
         self._total_size_bytes = 0
-    
+        
+        # Use museum's configured rate limit
+        self.rate_limit_delay = 1.0 / self.client.museum_info.rate_limit
+        
     def _check_limits(self, new_size_bytes: int = 0) -> bool:
-        '''
-        Checks if downloading another image would exceed capactiy limits 
-        '''
+        """Check if downloading another image would exceed capacity limits."""
         if self.max_downloads and self._download_count >= self.max_downloads:
             logging.warning(f"Maximum download count ({self.max_downloads}) reached")
             return False
 
-        if self.max_storage_bytes: 
+        if self.max_storage_bytes:
             projected_total = self._total_size_bytes + new_size_bytes
             if projected_total > self.max_storage_bytes:
                 logging.warning(
-                    "Max storage limit reached."
-                    f"({self._total_size_bytes / (1024**3):.2f}GB / {self.max_storage_bytes / (1024**3):.2f}GB)"
+                    f"Max storage limit reached. "
+                    f"({self._total_size_bytes / (1024**3):.2f}GB / "
+                    f"{self.max_storage_bytes / (1024**3):.2f}GB)"
                 )
                 return False
         
         return True
-        
 
-    def download_artwork(self, aic_id: int, img_id: str, title: str, artist: str) -> None:
-        """Download and save a single artwork."""
-        artwork_info = f"[AIC ID: {aic_id} '{title} by {artist}]"
+    def download_artwork(self, artwork_id: str) -> None:
+        """Download and process a single artwork."""
         try:
-            if not img_id:
-                raise ValueError("No image ID available")
-
-            image_data = self.api_client.get_image(img_id)
+            # Get standardized metadata
+            metadata = self.client.get_artwork_details(artwork_id)
+            artwork_info = f"[{self.client.museum_info.name} ID: {artwork_id}] '{metadata.title}' by {metadata.artist}"
             
-            #Check size limits
-            image_size = len(image_data)
+            # Check if we can process this artwork
+            if not metadata.is_public_domain:
+                self.progress_tracker.log_status(artwork_id, "skipped", "Not in public domain")
+                return
+                
+            if not metadata.image_id:
+                self.progress_tracker.log_status(artwork_id, "skipped", "No image available")
+                return
+
+            # Download image
+            image_url = self.client.build_image_url(metadata.image_id)
+            response = self.client.session.get(image_url)
+            response.raise_for_status()
+            
+            # Check size limits
+            image_size = len(response.content)
             if not self._check_limits(image_size):
-                self.progress_tracker.log_status(aic_id, "skipped", "Download limits reached")
+                self.progress_tracker.log_status(artwork_id, "skipped", "Download limits reached")
                 return
             
-            filename = self._generate_filename(aic_id, title, artist)
-            self.image_processor.save_image(image_data, filename)
+            # Process and save image
+            self.image_processor.process_image(response.content, metadata)
             
             self._download_count += 1
             self._total_size_bytes += image_size
             
-            self.progress_tracker.log_status(aic_id, "success")
-            logging.info(f"Successfully processed and saved {aic_id} as '{filename}")
+            self.progress_tracker.log_status(artwork_id, "success")
+            logging.info(f"Successfully processed {artwork_info}")
             
         except Exception as e:
             error_msg = f"Failed to process {artwork_info}: {str(e)}"
             logging.error(error_msg)
-            self._handle_error(aic_id, str(e))
+            self._handle_error(artwork_id, str(e))
+            
+        finally:
+            time.sleep(self.rate_limit_delay)
 
-    def download_all_artwork(self, force_restart: bool = False) -> None:
-        """Download all public domain artwork from Prints and Drawings department."""
-        
-        consecutive_errors = 0
-        MAX_CONSECUTIVE_ERRORS = 5
-        
+    def download_collection(self, params: Dict[str, Any], force_restart: bool = False) -> None:
+        """Download artworks from the collection matching given parameters."""
+        museum_name = self.client.museum_info.name
         logging.info(
-            f"Starting download_all_artwork process with limits: "
+            f"Starting download process for {museum_name} with limits: "
             f"max_downloads={self.max_downloads}, "
             f"max_storage_gb={self.max_storage_bytes/1024**3 if self.max_storage_bytes else 'None'}GB"
         )
-        
-        params = {
-            'is_public_domain': 'true',
-            'department_title': 'Prints and Drawings',
-            'fields': 'id,title,artist_display,image_id,department_title',
-            'limit': 100
-        }
         
         page = 1 if force_restart else self.progress_tracker.get_last_page() + 1
         logging.info(f"Starting from page {page}")
@@ -104,7 +107,7 @@ class ArtworkDownloader:
         while True:
             try:
                 logging.info(f"Fetching page {page}")
-                data = self.api_client.get_artwork_page(page, params)
+                data = self.client.get_artwork_page(page, params)
                 
                 if not data.get('data'):
                     logging.info("No more artwork to process")
@@ -115,52 +118,28 @@ class ArtworkDownloader:
                 self.progress_tracker.update_page(page)
                 
                 page += 1
-                consecutive_errors = 0 
-                time.sleep(self.rate_limit_delay)
                 
             except Exception as e:
-                consecutive_errors += 1
                 logging.error(f"Error processing page {page}: {str(e)}")
-                
-                if consecutive_errors > MAX_CONSECUTIVE_ERRORS: 
-                    logging.error("Too many consecutive errors. Stopping download")
-                    raise
-                
-                wait_time = min(300, self.rate_limit_delay * (2 ** consecutive_errors))
-                time.sleep(wait_time)
+                time.sleep(5)  # Longer delay on error
+                continue
 
     def _process_page(self, artworks: List[Dict[str, Any]]) -> None:
         """Process a page of artwork data."""
         for art in artworks:
-            aic_id = art['id']
+            artwork_id = str(art['id'])
             
-            if self.progress_tracker.is_processed(aic_id):
-                logging.debug(f"Skipping already processed artwork ID: {aic_id}")
+            if self.progress_tracker.is_processed(artwork_id):
+                logging.debug(f"Skipping already processed artwork ID: {artwork_id}")
                 continue
-                
-            if art['department_title'] != 'Prints and Drawings':
-                self.progress_tracker.log_status(aic_id, "skipped", "Not in Prints and Drawings department")
-                continue
-                
-            self.download_artwork(
-                aic_id,
-                art.get('image_id'),
-                art.get('title', 'Untitled'),
-                art.get('artist_display', 'Unknown Artist')
-            )
-            time.sleep(self.rate_limit_delay)
+            
+            self.download_artwork(artwork_id)
 
-    def _handle_error(self, aic_id: int, error_message: str) -> None:
-        """Handle download errors."""
+    def _handle_error(self, artwork_id: str, error_message: str) -> None:
+        """Handle download errors with appropriate categorization."""
         if "network" in error_message.lower():
-            self.progress_tracker.log_status(aic_id, "network_error", error_message)
+            self.progress_tracker.log_status(artwork_id, "network_error", error_message)
         elif "image" in error_message.lower():
-            self.progress_tracker.log_status(aic_id, "image_processing_error", error_message)
+            self.progress_tracker.log_status(artwork_id, "image_processing_error", error_message)
         else:
-            self.progress_tracker.log_status(aic_id, "other_error", error_message)
-
-    def _generate_filename(self, aic_id: int, title: str, artist: str) -> str: 
-        '''
-        Generates a sanitized filename for the artwork using the sanitize_filename utility
-        '''
-        return sanitize_filename(str(aic_id), title, artist)
+            self.progress_tracker.log_status(artwork_id, "other_error", error_message)
