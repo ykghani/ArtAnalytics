@@ -5,6 +5,7 @@ from io import BytesIO
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from .schemas import ArtworkMetadata, MuseumInfo
+from ..utils import sanitize_filename
 
 class AICClient(MuseumAPIClient):
     """Art Institute of Chicago API Client implementation"""
@@ -76,13 +77,9 @@ class AICImageProcessor(MuseumImageProcessor):
     def generate_filename(self, metadata: ArtworkMetadata) -> str:
         """Generate a filename for the artwork"""
         # Clean up artist and title for filename
-        safe_title = "".join(c for c in metadata.title if c.isalnum() or c in (' ', '-', '_'))
-        safe_artist = "".join(c for c in metadata.artist if c.isalnum() or c in (' ', '-', '_'))
-        
-        # Truncate if necessary
-        if len(safe_title) > 50:
-            safe_title = safe_title[:47] + "..."
-        if len(safe_artist) > 30:
-            safe_artist = safe_artist[:27] + "..."
-            
-        return f"AIC_{metadata.id}_{safe_title}_{safe_artist}.jpg"
+        return sanitize_filename(
+            id= f"AIC_{metadata.id}",
+            title= metadata.title,
+            artist= metadata.artist,
+            max_length= 255
+        )

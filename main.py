@@ -6,6 +6,7 @@ from typing import Dict, Any
 from src.config import settings, LogLevel
 from src.download import ArtworkDownloader, ProgressTracker
 from src.museums.aic import AICClient, AICImageProcessor
+from src.museums.met import MetClient, MetImageProcessor
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 
 def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
@@ -38,20 +39,29 @@ def setup_logging(log_dir: Path, log_level: LogLevel) -> None:
     if log_level != LogLevel.NONE:
         logging.info(f"Logging configured with level: {log_level}")
 
+def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo: 
+    """Create MuseumInfo instance based on museum configuration"""
+    museum_names = {
+        'aic': "Art Institute of Chicago",
+        'met': "Metropolitan Museum of Art"
+    }
+    
+    return MuseumInfo(
+        name=museum_names.get(museum_id, "Unknown Museum"),
+        base_url=config.api_base_url,
+        user_agent=config.user_agent,
+        rate_limit=config.rate_limit,
+        api_version=config.api_version,
+        requires_api_key=False  # Neither museum requires API key
+    )
+
 def get_museum_config(museum_id: str) -> Dict[str, Any]:
     '''Get museum specific configuration and params'''
     if museum_id not in settings.museums:
         raise ValueError(f"Unknown museum ID: {museum_id}")
         
     museum_config = settings.museums[museum_id]
-    museum_info = MuseumInfo(
-        name="Art Institute of Chicago",
-        base_url="https://api.artic.edu/api/v1",
-        user_agent=museum_config.user_agent,
-        rate_limit=museum_config.rate_limit,
-        api_version=museum_config.api_version,
-        requires_api_key=False  # AIC doesn't require an API key
-    )
+    museum_info = create_museum_info(museum_id, museum_config)
         
     configs = {
         'aic': {
@@ -63,6 +73,12 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
                 'department_title': 'Prints and Drawings',
                 'fields': 'id,title,artist_display,image_id,department_title,date_display,medium,dimensions,credit_line'
             }
+        },
+        'met': {
+            'client_class': MetClient,
+            'processor_class': MetImageProcessor,
+            'museum_info': museum_info,
+            'params': {}
         }
     }
     

@@ -8,6 +8,7 @@ from pathlib import Path
 import requests_cache
 
 from .schemas import ArtworkMetadata, MuseumInfo
+from ..utils import sanitize_filename
 
 class MuseumAPIClient(ABC): 
     '''Abstract base class for museum API clients'''
@@ -116,5 +117,4 @@ class MuseumImageProcessor(ABC):
     
     @abstractmethod
     def generate_filename(self, metadata: ArtworkMetadata) -> str: 
-        '''Generate appropriate filename for artwork'''
-        pass
+        pass 

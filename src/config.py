@@ -33,6 +33,10 @@ class Settings(BaseSettings):
                 api_base_url= "https://api.artic.edu/api/v1/artworks",
                 user_agent= "AIC-ArtDownloadBot/1.0",
                 contact_email= "yusuf.k.ghani@gmail.com"
+            ),
+            'met': MuseumConfig(
+                api_base_url = "https://collectionapi.metmuseum.org/public/collection/v1/objects/",
+                rate_limit = 80.0
             )
         }
     )
