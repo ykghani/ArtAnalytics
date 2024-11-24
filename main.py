@@ -117,8 +117,7 @@ def download_museum_collection(museum_id: str) -> None:
         client=client,
         image_processor=image_processor,
         progress_tracker=progress_tracker,
-        max_downloads=settings.max_downloads,
-        max_storage_gb=settings.max_storage_gb
+        settings= settings
     )
     
     logging.info(f"Starting download for {museum_id} museum")

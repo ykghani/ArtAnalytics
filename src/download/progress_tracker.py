@@ -20,12 +20,16 @@ class ProgressTracker:
         self.download_log = {
             "success": [],
             "failed": [],
+            "skipped": [],
             "network_error": [],
             "image_processing_error": [],
+            "validation_error": [],
+            "download_error": [],
             "other_error": {},
             "all": set(),
             "last_page": 0
         }
+        self._error_counts = {}
         
         self._load_progress()
 

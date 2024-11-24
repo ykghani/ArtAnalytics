@@ -20,6 +20,7 @@ class AICClient(MuseumAPIClient):
     
     def get_artwork_page(self, page: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """Fetch a page of artworks"""
+        base_url = self.museum_info.base_url.rstrip('/artworks')
         url = f"{self.museum_info.base_url}/artworks"
         params['page'] = page
         response = self.session.get(url, params=params, timeout=(5, 30))

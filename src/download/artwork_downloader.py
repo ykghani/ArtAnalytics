@@ -7,6 +7,7 @@ import requests
 from ..museums.base import MuseumAPIClient, MuseumImageProcessor
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import ProgressTracker
+from ..config import Settings
 
 class ArtworkDownloader:
     """Generic artwork downloader that works with any museum API client."""
@@ -16,19 +17,22 @@ class ArtworkDownloader:
         client: MuseumAPIClient,
         image_processor: MuseumImageProcessor,
         progress_tracker: ProgressTracker,
-        max_downloads: Optional[int] = None,
-        max_storage_gb: Optional[float] = None
+        settings = Settings 
     ):
         self.client = client
         self.image_processor = image_processor
         self.progress_tracker = progress_tracker
-        self.max_downloads = max_downloads
-        self.max_storage_bytes = int(max_storage_gb * 1024 * 1024 * 1024) if max_storage_gb else None
+        self.rate_limit_delay = settings.rate_limit_delay
+        self.max_retries = settings.max_retries
+        self.error_rate_delay = settings.error_retry_delay
+        self.batch_size = settings.batch_size
+        self.max_downloads = settings.max_downloads
+        self.max_storage_bytes = int(settings.max_storage_gb * 1024 * 1024 * 1024) if settings.max_storage_gb else None
+        
+        self._retry_count = 0
         self._download_count = 0
         self._total_size_bytes = 0
         
-        # Use museum's configured rate limit
-        self.rate_limit_delay = 1.0 / self.client.museum_info.rate_limit
         
     def _check_limits(self, new_size_bytes: int = 0) -> bool:
         """Check if downloading another image would exceed capacity limits."""
@@ -47,6 +51,19 @@ class ArtworkDownloader:
                 return False
         
         return True
+    
+    def _should_retry(self, error: Exception) -> bool:
+        """Determine if we should retry the download based on error type and retry count."""
+        if self._retry_count >= self.max_retries:
+            return False
+            
+        retriable_errors = (
+            "timeout", "connection error", "network", 
+            "500", "502", "503", "504"
+        )
+        
+        error_str = str(error).lower()
+        return any(err in error_str for err in retriable_errors)
 
     def download_artwork(self, artwork_id: str) -> None:
         """Download and process a single artwork."""
@@ -92,37 +109,75 @@ class ArtworkDownloader:
         finally:
             time.sleep(self.rate_limit_delay)
 
-    def download_collection(self, params: Dict[str, Any], force_restart: bool = False) -> None:
-        """Download artworks from the collection matching given parameters."""
-        museum_name = self.client.museum_info.name
-        logging.info(
-            f"Starting download process for {museum_name} with limits: "
-            f"max_downloads={self.max_downloads}, "
-            f"max_storage_gb={self.max_storage_bytes/1024**3 if self.max_storage_bytes else 'None'}GB"
-        )
+
+    def download_collection(self, params: Dict[str, Any]) -> None:
+        """Download all artwork matching the given parameters."""
+        page = self.progress_tracker.get_last_page() + 1
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        process_completed = False
+        completion_reason = "Unknown"
         
-        page = 1 if force_restart else self.progress_tracker.get_last_page() + 1
         logging.info(f"Starting from page {page}")
         
-        while True:
-            try:
-                logging.info(f"Fetching page {page}")
-                data = self.client.get_artwork_page(page, params)
-                
-                if not data.get('data'):
-                    logging.info("No more artwork to process")
-                    break
-                
-                logging.info(f"Processing {len(data['data'])} artworks from page {page}")
-                self._process_page(data['data'])
-                self.progress_tracker.update_page(page)
-                
-                page += 1
-                
-            except Exception as e:
-                logging.error(f"Error processing page {page}: {str(e)}")
-                time.sleep(5)  # Longer delay on error
-                continue
+        try:
+            while True:
+                try:
+                    logging.info(f"Fetching page {page}")
+                    data = self.client.get_artwork_page(page, params)
+                    
+                    # Check if we've reached the end
+                    if not data.get('data'):
+                        logging.info("No more artwork to process - reached end of collection")
+                        process_completed = True
+                        completion_reason = "Reached end of collection"
+                        break
+                        
+                    # Reset error counter on successful request
+                    consecutive_errors = 0
+                    
+                    logging.info(f"Processing {len(data['data'])} artworks from page {page}")
+                    self._process_page(data['data'])
+                    self.progress_tracker.update_page(page)
+                    
+                    page += 1
+                    time.sleep(self.rate_limit_delay)
+                    
+                except requests.exceptions.HTTPError as e:
+                    consecutive_errors += 1
+                    logging.error(f"HTTP Error processing page {page}: {str(e)}")
+                    
+                    if e.response.status_code == 400:
+                        process_completed = True  # Consider this a completion if we hit invalid page
+                        completion_reason = "Reached invalid page - likely end of collection"
+                        logging.info(f"Received 400 error - likely reached end of available pages")
+                        break
+                        
+                    if consecutive_errors >= max_consecutive_errors:
+                        completion_reason = f"Exceeded maximum consecutive errors ({max_consecutive_errors})"
+                        break
+                        
+                    time.sleep(self.error_rate_delay)
+                    
+                except Exception as e:
+                    consecutive_errors += 1
+                    logging.error(f"Error processing page {page}: {str(e)}")
+                    
+                    if consecutive_errors >= max_consecutive_errors:
+                        completion_reason = f"Exceeded maximum consecutive errors ({max_consecutive_errors})"
+                        break
+                        
+                    time.sleep(self.error_rate_delay)
+                    
+        finally:
+            # Generate and log summary regardless of how we exit
+            summary = self._generate_summary_report()
+            self._log_summary(summary)
+            
+            if process_completed:
+                logging.info(f"Download process completed: {completion_reason}")
+            else:
+                logging.warning(f"Download process ended before completion: {completion_reason}")
 
     def _process_page(self, artworks: List[Dict[str, Any]]) -> None:
         """Process a page of artwork data."""
@@ -135,11 +190,64 @@ class ArtworkDownloader:
             
             self.download_artwork(artwork_id)
 
-    def _handle_error(self, artwork_id: str, error_message: str) -> None:
-        """Handle download errors with appropriate categorization."""
-        if "network" in error_message.lower():
-            self.progress_tracker.log_status(artwork_id, "network_error", error_message)
-        elif "image" in error_message.lower():
-            self.progress_tracker.log_status(artwork_id, "image_processing_error", error_message)
+    def _handle_error(self, aic_id: int, error_message: str) -> None:
+        """Handle download errors with improved categorization."""
+        error_type = self._categorize_error(error_message)
+        self.progress_tracker.log_status(aic_id, error_type, error_message)
+        
+    def _categorize_error(self, error_message: str) -> str:
+        """Categorize errors based on error message content."""
+        error_message = error_message.lower()
+        
+        if any(term in error_message for term in ["timeout", "connection", "network"]):
+            return "network_error"
+        elif any(term in error_message for term in ["image", "jpg", "jpeg", "png"]):
+            return "image_processing_error"
+        elif any(term in error_message for term in ["valid", "schema", "format"]):
+            return "validation_error"
+        elif any(term in error_message for term in ["download", "fetch", "retrieve"]):
+            return "download_error"
+        elif "skip" in error_message:
+            return "skipped"
         else:
-            self.progress_tracker.log_status(artwork_id, "other_error", error_message)
+            return "other_error"
+    
+    def _generate_summary_report(self) -> Dict[str, Any]:
+        """Generate summary statistics for the download process."""
+        total_processed = len(self.progress_tracker.download_log['all'])
+        successful = len(self.progress_tracker.download_log['success'])
+        failed = len(self.progress_tracker.download_log['failed'])
+        
+        total_size_gb = self._total_size_bytes / (1024**3)
+        avg_size_mb = (self._total_size_bytes / max(successful, 1)) / (1024**2)
+        
+        return {
+            'total_processed': total_processed,
+            'successful_downloads': successful,
+            'failed_downloads': failed,
+            'success_rate': f"{(successful/max(total_processed, 1))*100:.2f}%",
+            'total_storage_used': f"{total_size_gb:.2f}GB",
+            'average_file_size': f"{avg_size_mb:.2f}MB",
+            'last_page_processed': self.progress_tracker.get_last_page(),
+            'error_breakdown': self.progress_tracker.download_log.get('other_error', {})
+        }
+
+    def _log_summary(self, summary: Dict[str, Any]) -> None:
+        """Log summary report in a readable format."""
+        logging.info("=" * 50)
+        logging.info("DOWNLOAD PROCESS SUMMARY")
+        logging.info("=" * 50)
+        logging.info(f"Total Artworks Processed: {summary['total_processed']}")
+        logging.info(f"Successful Downloads: {summary['successful_downloads']}")
+        logging.info(f"Failed Downloads: {summary['failed_downloads']}")
+        logging.info(f"Success Rate: {summary['success_rate']}")
+        logging.info(f"Total Storage Used: {summary['total_storage_used']}")
+        logging.info(f"Average File Size: {summary['average_file_size']}")
+        logging.info(f"Last Page Processed: {summary['last_page_processed']}")
+        
+        if summary['error_breakdown']:
+            logging.info("\nError Breakdown:")
+            for error_type, errors in summary['error_breakdown'].items():
+                logging.info(f"  {error_type}: {len(errors)} occurrences")
+        
+        logging.info("=" * 50)
