@@ -57,3 +57,12 @@ htmlcov/
 nosetests.xml
 coverage.xml
 *.cover
+
+#Poetry
+# Poetry
+.venv/
+dist/
+*.pyc
+__pycache__/
+.pytest_cache/
+poetry.lock
