@@ -94,7 +94,7 @@ def download_museum_collection(museum_id: str) -> None:
     
     #Setup cache and progress tracking paths
     cache_dir = museum_paths['cache']
-    cache_file = cache_dir / 'aic_cache.sqlite'
+    cache_file = cache_dir / f"{museum_id}_cache.sqlite"
     progress_file = cache_dir / 'processed_ids.json'
     
     cache_dir.mkdir(parents= True, exist_ok= True)

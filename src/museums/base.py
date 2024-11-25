@@ -52,51 +52,37 @@ class MuseumAPIClient(ABC):
         '''Return authentication header value'''
         pass
     
-    @abstractmethod
-    def get_artwork_page(self, page: int, params: Dict[str, Any]) -> Dict[str, Any]:
-        '''Get a page of artwork listings'''
-        pass
-    
-    @abstractmethod
-    def get_artwork_details(self, artwork_id: str) -> ArtworkMetadata:
-        '''Get detailed info for a specific artwork'''
-        pass
-    
-    @abstractmethod
-    def get_departments(self) -> Dict[str, Any]:
-        '''Get mapping of department IDs to names'''
-        pass
-    
-    @abstractmethod
-    def build_image_url(self, image_id: str, **kwargs) -> str:
-        '''Build url for downloading artworks'''
-        pass
-        
-    @abstractmethod
-    def search_artworks(self, query: str, **kwargs) -> Dict[str, Any]:
-        '''Search for artworks with museum specific params'''
-        pass
-    
     def iter_collection(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Iterate over entire collection with specified params'''
-        page = 1
-        while True: 
-            try:
-                response = self.get_artwork_page(page, params)
-                if not response or not response.get('data'):
-                    break 
-                
-                for item in response['data']:
-                    try:
-                        yield self.get_artwork_details(str(item['id']))
-                    except Exception as e:
-                        logging.error(f"Error processing artwork {item['id']}: {e}")
-                        continue
-                    
-                page += 1
-            except Exception as e:
-                logging.error(f"Error fetching page {page}: {e}")
-                break
+        '''
+        Main interface for iterating through a museum's collection.
+        Each museum client implements its own _iter_collection_impl method.
+        '''
+        try:
+            yield from self._iter_collection_impl(**params)
+        except Exception as e:
+            logging.error(f"Error iterating through collection: {e}")
+            return
+    
+    @abstractmethod
+    def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
+        '''Implementation specific to each museum API'''
+        pass
+    
+    def get_artwork_details(self, artwork_id: str) -> ArtworkMetadata:
+        '''
+        Get detailed info for a specific artwork.
+        This could be overridden if needed but provides a common implementation.
+        '''
+        try:
+            return self._get_artwork_details_impl(artwork_id)
+        except Exception as e:
+            logging.error(f"Error fetching artwork {artwork_id}: {e}")
+            raise
+
+    @abstractmethod
+    def _get_artwork_details_impl(self, artwork_id: str) -> ArtworkMetadata:
+        '''Implementation specific to each museum API'''
+        pass
 
 class MuseumImageProcessor(ABC): 
     '''ABC for processing museum images'''

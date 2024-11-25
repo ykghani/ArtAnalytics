@@ -1,6 +1,7 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Iterator
 from pathlib import Path
 from PIL import Image
+import logging
 from io import BytesIO
 
 from .base import MuseumAPIClient, MuseumImageProcessor
@@ -27,8 +28,8 @@ class AICClient(MuseumAPIClient):
         response.raise_for_status()
         return response.json()
     
-    def get_artwork_details(self, artwork_id: str) -> ArtworkMetadata:
-        """Get detailed metadata for a specific artwork"""
+    def _get_artwork_details_impl(self, artwork_id: str) -> ArtworkMetadata:
+        '''Implement artwork details fetching for AIC'''
         url = f"{self.museum_info.base_url}/artworks/{artwork_id}"
         response = self.session.get(url, timeout=(5, 30))
         response.raise_for_status()
@@ -54,6 +55,24 @@ class AICClient(MuseumAPIClient):
         response = self.session.get(url, params=params, timeout=(5, 30))
         response.raise_for_status()
         return response.json()
+        
+    def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
+        '''Implement paginated collection iteration for AIC'''
+        page = 1
+        while True:
+            response = self.get_artwork_page(page, params)
+            if not response or not response.get('data'):
+                break
+                
+            for item in response['data']:
+                try:
+                    artwork = self._get_artwork_details_impl(str(item['id']))
+                    yield artwork
+                except Exception as e:
+                    logging.error(f"Error processing artwork {item['id']}: {e}")
+                    continue
+                    
+            page += 1
     
 class AICImageProcessor(MuseumImageProcessor):
     """Art Institute of Chicago image processor implementation"""

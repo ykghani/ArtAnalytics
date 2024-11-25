@@ -35,7 +35,7 @@ class Settings(BaseSettings):
                 contact_email= "yusuf.k.ghani@gmail.com"
             ),
             'met': MuseumConfig(
-                api_base_url = "https://collectionapi.metmuseum.org/public/collection/v1/objects/",
+                api_base_url = "https://collectionapi.metmuseum.org/public/collection/v1",
                 rate_limit = 80.0
             )
         }

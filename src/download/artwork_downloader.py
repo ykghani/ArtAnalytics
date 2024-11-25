@@ -22,7 +22,7 @@ class ArtworkDownloader:
         self.client = client
         self.image_processor = image_processor
         self.progress_tracker = progress_tracker
-        self.rate_limit_delay = settings.rate_limit_delay
+        self.rate_limit_delay = 1 / settings.rate_limit_delay if settings.rate_limit_delay > 0 else 1.0
         self.max_retries = settings.max_retries
         self.error_rate_delay = settings.error_retry_delay
         self.batch_size = settings.batch_size
@@ -65,110 +65,161 @@ class ArtworkDownloader:
         error_str = str(error).lower()
         return any(err in error_str for err in retriable_errors)
 
-    def download_artwork(self, artwork_id: str) -> None:
+    def download_artwork(self, artwork_metadata: ArtworkMetadata) -> None:
         """Download and process a single artwork."""
+        
         try:
-            # Get standardized metadata
-            metadata = self.client.get_artwork_details(artwork_id)
-            artwork_info = f"[{self.client.museum_info.name} ID: {artwork_id}] '{metadata.title}' by {metadata.artist}"
+            artwork_info = f"{self.client.museum_info.name} ID: {artwork_metadata.id} '{artwork_metadata.title}' by '{artwork_metadata.artist}"
             
-            # Check if we can process this artwork
-            if not metadata.is_public_domain:
-                self.progress_tracker.log_status(artwork_id, "skipped", "Not in public domain")
+            if not artwork_metadata.is_public_domain:
+                self.progress_tracker.log_status(artwork_metadata.id, "skipped", "Not public domain")
                 return
-                
-            if not metadata.image_id:
-                self.progress_tracker.log_status(artwork_id, "skipped", "No image available")
-                return
-
-            # Download image
-            image_url = self.client.build_image_url(metadata.image_id)
-            response = self.client.session.get(image_url)
-            response.raise_for_status()
             
-            # Check size limits
-            image_size = len(response.content)
+            if artwork_metadata.primary_image_url:
+                response = self.client.session.get(artwork_metadata.primary_image_url)
+                response.raise_for_status()
+                image_data = response.content
+            elif artwork_metadata.image_id: #Aic approach 
+                image_url = self.client.build_image_url(artwork_metadata.image_id)
+                reponse = self.client.session.get(image_url)
+                reponse.raise_for_status()
+                image_data = response.content
+            else:
+                self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'No image available')
+                return
+            
+            image_size = len(image_data)
             if not self._check_limits(image_size):
-                self.progress_tracker.log_status(artwork_id, "skipped", "Download limits reached")
+                self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'Download limits reached')
                 return
             
-            # Process and save image
-            self.image_processor.process_image(response.content, metadata)
+            self.image_processor.process_image(image_data, artwork_metadata)
             
             self._download_count += 1
             self._total_size_bytes += image_size
             
-            self.progress_tracker.log_status(artwork_id, "success")
-            logging.info(f"Successfully processed {artwork_info}")
+            self.progress_tracker.log_status(artwork_metadata.id, 'success')
+            logging.info(f'Successfully processed {artwork_info}')
             
-        except Exception as e:
-            error_msg = f"Failed to process {artwork_info}: {str(e)}"
+        except Exception as e: 
+            error_msg = f'Failed to process {artwork_info}: {str(e)}'
             logging.error(error_msg)
-            self._handle_error(artwork_id, str(e))
-            
+            self._handle_error(artwork_metadata.id, str(e))
+        
         finally:
             time.sleep(self.rate_limit_delay)
+        
+        
+        # try:
+        #     # Get standardized metadata
+        #     metadata = self.client.get_artwork_details(artwork_id)
+        #     artwork_info = f"[{self.client.museum_info.name} ID: {artwork_id}] '{metadata.title}' by {metadata.artist}"
+            
+        #     # Check if we can process this artwork
+        #     if not metadata.is_public_domain:
+        #         self.progress_tracker.log_status(artwork_id, "skipped", "Not in public domain")
+        #         return
+                
+        #     if not metadata.image_id:
+        #         self.progress_tracker.log_status(artwork_id, "skipped", "No image available")
+        #         return
+
+        #     # Download image
+        #     image_url = self.client.build_image_url(metadata.image_id)
+        #     response = self.client.session.get(image_url)
+        #     response.raise_for_status()
+            
+        #     # Check size limits
+        #     image_size = len(response.content)
+        #     if not self._check_limits(image_size):
+        #         self.progress_tracker.log_status(artwork_id, "skipped", "Download limits reached")
+        #         return
+            
+        #     # Process and save image
+        #     self.image_processor.process_image(response.content, metadata)
+            
+        #     self._download_count += 1
+        #     self._total_size_bytes += image_size
+            
+        #     self.progress_tracker.log_status(artwork_id, "success")
+        #     logging.info(f"Successfully processed {artwork_info}")
+            
+        # except Exception as e:
+        #     error_msg = f"Failed to process {artwork_info}: {str(e)}"
+        #     logging.error(error_msg)
+        #     self._handle_error(artwork_id, str(e))
+            
+        # finally:
+        #     time.sleep(self.rate_limit_delay)
 
 
     def download_collection(self, params: Dict[str, Any]) -> None:
         """Download all artwork matching the given parameters."""
-        page = self.progress_tracker.get_last_page() + 1
+        logging.info(f'Starting collection download for {self.client.museum_info.name}')
         consecutive_errors = 0
-        max_consecutive_errors = 5
+        max_consecutive_errors = 10
         process_completed = False
         completion_reason = "Unknown"
-        
-        logging.info(f"Starting from page {page}")
-        
+
         try:
+            artwork_iterator = self.client.iter_collection(**params)
             while True:
-                try:
-                    logging.info(f"Fetching page {page}")
-                    data = self.client.get_artwork_page(page, params)
-                    
-                    # Check if we've reached the end
-                    if not data.get('data'):
-                        logging.info("No more artwork to process - reached end of collection")
+                try: 
+                    try:
+                        artwork = next(artwork_iterator)
+                    except StopIteration:
                         process_completed = True
-                        completion_reason = "Reached end of collection"
+                        completion_reason = 'Reached end of collection'
+                        logging.info(f'No more art to process - reached end of collection')
                         break
+                    
+                    if self.progress_tracker.is_processed(artwork.id):
+                        logging.debug(f'Skipping already processed art ID: {artwork.id}')
+                        continue
+                    
+                    #Download artwork 
+                    try: 
+                        self.download_artwork(artwork)
+                        consecutive_errors = 0
+                    except requests.exceptions.HTTPError as e:
+                        consecutive_errors += 1
+                        logging.error(f"HTTP Error downloading artwork {artwork.id}: {str(e)}")
                         
-                    # Reset error counter on successful request
-                    consecutive_errors = 0
+                        if e.response.status_code == 400:
+                            process_completed = True
+                            completion_reason = 'Reached invalid resource - likely end of collection'
+                            break
+                        
+                        if consecutive_errors >= max_consecutive_errors:
+                            completion_reason = f'Exceeded max consecutive errors {max_consecutive_errors}'
+                            break 
+                        
+                        time.sleep(self.error_rate_delay)
+                        
+                    except Exception as e:
+                        consecutive_errors += 1
+                        logging.error(f"Error downloading artwork {artwork.id}: {e}")
+                        
+                        if consecutive_errors >= max_consecutive_errors:
+                            logging.error("Too many consecutive errors, stopping download")
+                            break
+                        
+                        time.sleep(self.error_rate_delay)
                     
-                    logging.info(f"Processing {len(data['data'])} artworks from page {page}")
-                    self._process_page(data['data'])
-                    self.progress_tracker.update_page(page)
-                    
-                    page += 1
                     time.sleep(self.rate_limit_delay)
-                    
-                except requests.exceptions.HTTPError as e:
-                    consecutive_errors += 1
-                    logging.error(f"HTTP Error processing page {page}: {str(e)}")
-                    
-                    if e.response.status_code == 400:
-                        process_completed = True  # Consider this a completion if we hit invalid page
-                        completion_reason = "Reached invalid page - likely end of collection"
-                        logging.info(f"Received 400 error - likely reached end of available pages")
-                        break
-                        
-                    if consecutive_errors >= max_consecutive_errors:
-                        completion_reason = f"Exceeded maximum consecutive errors ({max_consecutive_errors})"
-                        break
-                        
-                    time.sleep(self.error_rate_delay)
-                    
+                
                 except Exception as e:
                     consecutive_errors += 1
-                    logging.error(f"Error processing page {page}: {str(e)}")
+                    logging.error(f"Error downloading artwork {artwork.id}: {e}")
                     
                     if consecutive_errors >= max_consecutive_errors:
-                        completion_reason = f"Exceeded maximum consecutive errors ({max_consecutive_errors})"
+                        logging.error("Too many consecutive errors, stopping download")
                         break
-                        
-                    time.sleep(self.error_rate_delay)
                     
+                    time.sleep(self.error_rate_delay)
+                
+                time.sleep(self.rate_limit_delay)
+            
         finally:
             # Generate and log summary regardless of how we exit
             summary = self._generate_summary_report()
