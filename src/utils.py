@@ -28,7 +28,7 @@ def ensure_directory(path: Path) -> None:
     """Create directory if it doesn't exist."""
     path.mkdir(parents=True, exist_ok=True)
 
-def sanitize_filename(aic_id: str, title: str, artist: str, max_length: int = 255) -> str:
+def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -> str:
     """
     Sanitize and truncate filename, preserving AIC ID and artist name.
     
@@ -53,11 +53,12 @@ def sanitize_filename(aic_id: str, title: str, artist: str, max_length: int = 25
     clean_title = clean_text(title)
     clean_artist = clean_text(artist)
     
+    
     # Calculate available space for title
     # Format will be: "{aic_id}_{title}_{artist}.jpg"
     extension_length = 4  # ".jpg"
     separators_length = 2  # Two underscores
-    id_length = len(str(aic_id))
+    id_length = len(str(id))
     artist_length = len(clean_artist)
     
     # Calculate maximum title length
@@ -73,7 +74,7 @@ def sanitize_filename(aic_id: str, title: str, artist: str, max_length: int = 25
         clean_title = clean_title[:max_title_length-3] + "..."
     
     # Construct final filename
-    filename = f"{aic_id}_{clean_title}_{clean_artist}.jpg"
+    filename = f"{id}_{clean_title}_{clean_artist}.jpg"
     
     logging.debug(f"Sanitized filename: {filename} (length: {len(filename)})")
     
