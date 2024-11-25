@@ -65,4 +65,4 @@ dist/
 *.pyc
 __pycache__/
 .pytest_cache/
-poetry.lock
+poetry.lock.env
