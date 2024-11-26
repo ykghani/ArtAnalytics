@@ -26,12 +26,6 @@ from .database import Database
 from .repository import ArtworkRepository
 from .models import Museum, Artwork, Base
 
-__all__ = [
-    'Database',
-    'ArtworkRepository',
-    'Museum',
-    'Artwork',
-    'Base',
-]
+__all__ = ['Database', 'Base', 'Museum', 'Artwork', 'ArtworkRepository']
 
 __version__ = '0.1.0'

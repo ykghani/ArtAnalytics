@@ -60,8 +60,8 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     if museum_id not in settings.museums:
         raise ValueError(f"Unknown museum ID: {museum_id}")
         
+    museum_info = settings.get_museum_info(museum_id)
     museum_config = settings.museums[museum_id]
-    museum_info = create_museum_info(museum_id, museum_config)
         
     configs = {
         'aic': {

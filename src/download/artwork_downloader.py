@@ -9,6 +9,7 @@ from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import ProgressTracker
 from ..config import Settings
 from ..database.database import Database
+from ..database.models import Base
 from ..database.repository import ArtworkRepository
 
 class ArtworkDownloader:

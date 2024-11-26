@@ -4,6 +4,8 @@ from sqlalchemy.orm.session import Session
 from typing import Optional
 from pathlib import Path
 
+from .models import Base
+
 class Database:
     def __init__(self, db_path: Path):
         self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
@@ -19,6 +21,7 @@ class Database:
         
     def init_museums(self, session: Session):
         """Initialize museum entries if they don't exist"""
+        from .models import Museum
         museums = [
             {'code': 'met', 'name': 'Metropolitan Museum of Art'},
             {'code': 'aic', 'name': 'Art Institute of Chicago'}

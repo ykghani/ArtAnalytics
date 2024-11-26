@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings
 from typing import Optional, Dict
 from enum import Enum
 
+from .museums.schemas import MuseumInfo
+
 class LogLevel(str, Enum): 
     '''Enum for logging levels'''
     NONE = "none"
@@ -18,6 +20,19 @@ class MuseumConfig(BaseSettings):
     user_agent: str = Field(...)
     contact_email: EmailStr = Field(default= "")
     api_key: Optional[str] = Field(default=None)
+    code: str = Field(...)
+
+    def to_museum_info(self) -> MuseumInfo:
+        """Convert config to MuseumInfo instance"""
+        return MuseumInfo(
+            name=self.name if hasattr(self, 'name') else f"{self.code.upper()} Museum",
+            base_url=self.api_base_url,
+            code=self.code,
+            user_agent=self.user_agent,
+            api_version=self.api_version,
+            rate_limit=self.rate_limit,
+            requires_api_key=self.api_key is not None
+        )
 
     class Config:
         validate_assignment = True
@@ -37,6 +52,14 @@ class Settings(BaseSettings):
     met_api_base_url: str = Field(default="https://collectionapi.metmuseum.org/public/collection/v1", env='MET_API_BASE_URL')
     met_user_agent: str = Field(default="MET-ArtDownloadBot/1.0", env='MET_USER_AGENT')
     met_rate_limit: float = Field(default=80.0, env='MET_RATE_LIMIT')
+
+    def get_museum_info(self, museum_id: str) -> MuseumInfo:
+        """Get MuseumInfo for a specific museum"""
+        if museum_id not in self.museums:
+            raise ValueError(f"Unknown museum ID: {museum_id}")
+            
+        config = self.museums[museum_id]
+        return config.to_museum_info()
     
     @property
     def museums(self) -> Dict[str, MuseumConfig]:
@@ -46,13 +69,17 @@ class Settings(BaseSettings):
                 api_base_url=self.aic_api_base_url,
                 user_agent=self.aic_user_agent,
                 rate_limit=self.aic_rate_limit,
-                contact_email=self.default_contact_email
+                contact_email=self.default_contact_email,
+                code='aic',
+                name='Art Institute of Chicago'
             ),
             'met': MuseumConfig(
                 api_base_url=self.met_api_base_url,
                 user_agent=self.met_user_agent,
                 rate_limit=self.met_rate_limit,
-                contact_email=self.default_contact_email
+                contact_email=self.default_contact_email,
+                code='met',
+                name='Metropolitan Museum of Art'
             )
         }
     

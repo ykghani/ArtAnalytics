@@ -45,8 +45,8 @@ class MetClient(MuseumAPIClient):
                 
             logging.info(f"Found {total_ids} objects to process")
             
-            # Iterate through IDs, remove slicing when it works 
-            for object_id in object_ids[:10]:
+            # Iterate through IDs
+            for object_id in object_ids:
                 try:
                     artwork = self._get_artwork_details_impl(str(object_id))
                     if artwork:  # Only yield if we got valid artwork data
