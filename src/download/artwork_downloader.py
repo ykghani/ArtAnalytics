@@ -8,6 +8,8 @@ from ..museums.base import MuseumAPIClient, MuseumImageProcessor
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import ProgressTracker
 from ..config import Settings
+from ..database.database import Database
+from ..database.repository import ArtworkRepository
 
 class ArtworkDownloader:
     """Generic artwork downloader that works with any museum API client."""
@@ -32,6 +34,12 @@ class ArtworkDownloader:
         self._retry_count = 0
         self._download_count = 0
         self._total_size_bytes = 0
+        
+        self.db = Database(settings.database_path)
+        self.db.create_tables()
+        session = self.db.get_session()
+        self.db.init_museums(session)
+        self.artwork_repo = ArtworkRepository(session)
         
         
     def _check_limits(self, new_size_bytes: int = 0) -> bool:
@@ -71,18 +79,31 @@ class ArtworkDownloader:
         try:
             artwork_info = f"{self.client.museum_info.name} ID: {artwork_metadata.id} '{artwork_metadata.title}' by '{artwork_metadata.artist}"
             
+            # Check if artwork exists in database
+            existing_artwork = self.artwork_repo.get_artwork(
+                self.client.museum_info.code, 
+                artwork_metadata.id
+            )
+            
+            if existing_artwork and existing_artwork.image_path:
+                logging.info(f"Artwork {artwork_info} already exists in database")
+                self.progress_tracker.log_status(artwork_metadata.id, "skipped", "Already in database")
+                return
+            
             if not artwork_metadata.is_public_domain:
                 self.progress_tracker.log_status(artwork_metadata.id, "skipped", "Not public domain")
                 return
             
+            # Get image data
+            image_data = None
             if artwork_metadata.primary_image_url:
                 response = self.client.session.get(artwork_metadata.primary_image_url)
                 response.raise_for_status()
                 image_data = response.content
-            elif artwork_metadata.image_id: #Aic approach 
+            elif artwork_metadata.image_id:  # AIC approach 
                 image_url = self.client.build_image_url(artwork_metadata.image_id)
-                reponse = self.client.session.get(image_url)
-                reponse.raise_for_status()
+                response = self.client.session.get(image_url)
+                response.raise_for_status()
                 image_data = response.content
             else:
                 self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'No image available')
@@ -93,64 +114,29 @@ class ArtworkDownloader:
                 self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'Download limits reached')
                 return
             
-            self.image_processor.process_image(image_data, artwork_metadata)
+            # Process image and get the saved path
+            image_path = self.image_processor.process_image(image_data, artwork_metadata)
+            
+            # Save/update in database
+            self.artwork_repo.create_or_update_artwork(
+                metadata=artwork_metadata,
+                museum_code=self.client.museum_info.code,
+                image_path=str(image_path)
+            )
             
             self._download_count += 1
             self._total_size_bytes += image_size
             
             self.progress_tracker.log_status(artwork_metadata.id, 'success')
-            logging.info(f'Successfully processed {artwork_info}')
+            logging.info(f'Successfully processed and saved to database: {artwork_info}')
             
-        except Exception as e: 
+        except Exception as e:
             error_msg = f'Failed to process {artwork_info}: {str(e)}'
             logging.error(error_msg)
             self._handle_error(artwork_metadata.id, str(e))
         
         finally:
             time.sleep(self.rate_limit_delay)
-        
-        
-        # try:
-        #     # Get standardized metadata
-        #     metadata = self.client.get_artwork_details(artwork_id)
-        #     artwork_info = f"[{self.client.museum_info.name} ID: {artwork_id}] '{metadata.title}' by {metadata.artist}"
-            
-        #     # Check if we can process this artwork
-        #     if not metadata.is_public_domain:
-        #         self.progress_tracker.log_status(artwork_id, "skipped", "Not in public domain")
-        #         return
-                
-        #     if not metadata.image_id:
-        #         self.progress_tracker.log_status(artwork_id, "skipped", "No image available")
-        #         return
-
-        #     # Download image
-        #     image_url = self.client.build_image_url(metadata.image_id)
-        #     response = self.client.session.get(image_url)
-        #     response.raise_for_status()
-            
-        #     # Check size limits
-        #     image_size = len(response.content)
-        #     if not self._check_limits(image_size):
-        #         self.progress_tracker.log_status(artwork_id, "skipped", "Download limits reached")
-        #         return
-            
-        #     # Process and save image
-        #     self.image_processor.process_image(response.content, metadata)
-            
-        #     self._download_count += 1
-        #     self._total_size_bytes += image_size
-            
-        #     self.progress_tracker.log_status(artwork_id, "success")
-        #     logging.info(f"Successfully processed {artwork_info}")
-            
-        # except Exception as e:
-        #     error_msg = f"Failed to process {artwork_info}: {str(e)}"
-        #     logging.error(error_msg)
-        #     self._handle_error(artwork_id, str(e))
-            
-        # finally:
-        #     time.sleep(self.rate_limit_delay)
 
 
     def download_collection(self, params: Dict[str, Any]) -> None:

@@ -25,6 +25,8 @@ venv/
 ENV/
 env/
 .env
+.env.*
+!.env.example
 
 # IDE
 .idea/
@@ -59,7 +61,6 @@ coverage.xml
 *.cover
 
 #Poetry
-# Poetry
 .venv/
 dist/
 *.pyc

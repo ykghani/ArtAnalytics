@@ -16,7 +16,7 @@ class MuseumConfig(BaseSettings):
     api_version: str = Field(default="v1")
     rate_limit: float = Field(default=1.0)
     user_agent: str = Field(...)
-    contact_email: EmailStr = Field(...)
+    contact_email: EmailStr = Field(default= "")
     api_key: Optional[str] = Field(default=None)
 
     class Config:
@@ -26,42 +26,55 @@ class MuseumConfig(BaseSettings):
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
     
-    # Initialize museums configs
-    museums: Dict[str, MuseumConfig] = Field(
-        default_factory= lambda: {
+    # Common Settings
+    default_contact_email: EmailStr = Field(..., env='DEFAULT_CONTACT_EMAIL')
+    
+    # Museum-specific Settings
+    aic_api_base_url: str = Field(default="https://api.artic.edu/api/v1/artworks", env='AIC_API_BASE_URL')
+    aic_user_agent: str = Field(default="AIC-ArtDownloadBot/1.0", env='AIC_USER_AGENT')
+    aic_rate_limit: float = Field(default=1.0, env='AIC_RATE_LIMIT')
+    
+    met_api_base_url: str = Field(default="https://collectionapi.metmuseum.org/public/collection/v1", env='MET_API_BASE_URL')
+    met_user_agent: str = Field(default="MET-ArtDownloadBot/1.0", env='MET_USER_AGENT')
+    met_rate_limit: float = Field(default=80.0, env='MET_RATE_LIMIT')
+    
+    @property
+    def museums(self) -> Dict[str, MuseumConfig]:
+        """Create museum configurations using the settings."""
+        return {
             'aic': MuseumConfig(
-                api_base_url= "https://api.artic.edu/api/v1/artworks",
-                user_agent= "AIC-ArtDownloadBot/1.0",
-                contact_email= "yusuf.k.ghani@gmail.com"
+                api_base_url=self.aic_api_base_url,
+                user_agent=self.aic_user_agent,
+                rate_limit=self.aic_rate_limit,
+                contact_email=self.default_contact_email
             ),
             'met': MuseumConfig(
-                api_base_url = "https://collectionapi.metmuseum.org/public/collection/v1",
-                rate_limit = 80.0
+                api_base_url=self.met_api_base_url,
+                user_agent=self.met_user_agent,
+                rate_limit=self.met_rate_limit,
+                contact_email=self.default_contact_email
             )
         }
-    )
-    
-    #Logging configuration
-    log_level: LogLevel = Field(default=LogLevel.VERBOSE)
     
     # File System Configuration
-    project_root: Optional[Path] = Field(default=None)
-    data_dir: Optional[Path] = Field(default=None)
-    cache_dir: Optional[Path] = Field(default=None)
-    images_dir: Optional[Path] = Field(default=None)
-    logs_dir: Optional[Path] = Field(default=None)
-    cache_file: Optional[Path] = Field(default=None)
+    project_root: Optional[Path] = None
+    data_dir: Optional[Path] = None
+    cache_dir: Optional[Path] = None
+    images_dir: Optional[Path] = None
+    logs_dir: Optional[Path] = None
+    cache_file: Optional[Path] = None
+    database_path: Optional[Path] = None
     
-    #Museum-specific directories
+    # Museum-specific directories
     museum_dirs: Dict[str, Path] = Field(default_factory=dict)
     
     # Download Configuration
-    batch_size: int = Field(default=100)
-    rate_limit_delay: float = Field(default=1.0)
-    error_retry_delay: float = Field(default=5.0)
-    max_retries: int = Field(default=5)
-    max_downloads: Optional[int] = Field(default=None)
-    max_storage_gb: Optional[float] = Field(default=None)
+    batch_size: int = Field(default=100, env='BATCH_SIZE')
+    rate_limit_delay: float = Field(default=1.0, env='RATE_LIMIT_DELAY')
+    error_retry_delay: float = Field(default=5.0, env='ERROR_RETRY_DELAY')
+    max_retries: int = Field(default=5, env='MAX_RETRIES')
+    max_downloads: Optional[int] = None
+    max_storage_gb: Optional[float] = None
     
     def initialize_paths(self, project_root: Path) -> None:
         """Initialize path configurations based on project root."""
@@ -71,6 +84,9 @@ class Settings(BaseSettings):
         #Setup shared directories
         self.cache_dir = self.data_dir / 'cache'
         self.logs_dir = self.data_dir / 'logs'
+        
+        #Setup database
+        self.database_path = self.data_dir / 'artwork.db'
         
         #Museum specific directories
         self.museum_dirs = {
