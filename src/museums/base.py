@@ -68,6 +68,10 @@ class MuseumAPIClient(ABC):
         '''Implementation specific to each museum API'''
         pass
     
+    @abstractmethod
+    def get_collection_info(self) -> Dict[str, Any]:
+        pass 
+    
     def get_artwork_details(self, artwork_id: str) -> ArtworkMetadata:
         '''
         Get detailed info for a specific artwork.

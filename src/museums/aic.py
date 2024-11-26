@@ -3,9 +3,11 @@ from pathlib import Path
 from PIL import Image
 import logging
 from io import BytesIO
+from dataclasses import dataclass
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from .schemas import ArtworkMetadata, MuseumInfo
+from ..download.progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import sanitize_filename
 
 class AICClient(MuseumAPIClient):
@@ -103,3 +105,40 @@ class AICImageProcessor(MuseumImageProcessor):
             artist= metadata.artist,
             max_length= 255
         )
+
+@dataclass
+class AICProgressState(ProgressState):
+    last_page: int = 0
+    total_pages: int = 0
+
+class AICProgressTracker(BaseProgressTracker):
+    def __init__(self, progress_file: Path):
+        self.state = AICProgressState()
+        super().__init__(progress_file)
+    
+    def get_state_dict(self) -> Dict[str, Any]:
+        return {
+            'processed_ids': list(self.state.processed_ids),
+            'success_ids': list(self.state.success_ids),
+            'failed_ids': list(self.state.failed_ids),
+            'error_log': self.state.error_log,
+            'last_page': self.state.last_page,
+            'total_pages': self.state.total_pages
+        }
+    
+    def restore_state(self, data: Dict[str, Any]) -> None:
+        self.state.processed_ids = set(data.get('processed_ids', []))
+        self.state.success_ids = set(data.get('success_ids', []))
+        self.state.failed_ids = set(data.get('failed_ids', []))
+        self.state.error_log = data.get('error_log', {})
+        self.state.last_page = data.get('last_page', 0)
+        self.state.total_pages = data.get('total_pages', 0)
+    
+    def update_page(self, page: int) -> None: 
+        '''Update last processed page numebr'''
+        self.state.last_page = page
+        self._save_progress()
+    
+    def get_last_page(self) -> int: 
+        '''Get last processed page number'''
+        return self.state.last_page

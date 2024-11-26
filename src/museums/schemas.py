@@ -36,6 +36,8 @@ class ArtworkMetadata:
     is_on_view: Optional[bool] = None
     tags: Optional[List[str]] = None
     is_highlight: Optional[bool] = False
+    page: Optional[int] = None
+    total_objects: Optional[int] = None
     
     @classmethod
     def from_aic_response(cls, data: dict) -> 'ArtworkMetadata':

@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Dict, Any
 
 from src.config import settings, LogLevel
-from src.download import ArtworkDownloader, ProgressTracker
-from src.museums.aic import AICClient, AICImageProcessor
-from src.museums.met import MetClient, MetImageProcessor
+from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
+from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
+from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 
 def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
@@ -49,6 +49,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
     return MuseumInfo(
         name=museum_names.get(museum_id, "Unknown Museum"),
         base_url=config.api_base_url,
+        code= museum_id,
         user_agent=config.user_agent,
         rate_limit=config.rate_limit,
         api_version=config.api_version,
@@ -60,13 +61,16 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     if museum_id not in settings.museums:
         raise ValueError(f"Unknown museum ID: {museum_id}")
         
-    museum_info = settings.get_museum_info(museum_id)
+    # museum_info = settings.get_museum_info(museum_id)
     museum_config = settings.museums[museum_id]
+    museum_info = create_museum_info(museum_id, museum_config)
+    museum_paths = settings.get_museum_paths(museum_id)
         
     configs = {
         'aic': {
             'client_class': AICClient,
             'processor_class': AICImageProcessor,
+            'tracker_class': AICProgressTracker,
             'museum_info': museum_info,
             'params': {
                 'is_public_domain': True, 
@@ -77,6 +81,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         'met': {
             'client_class': MetClient,
             'processor_class': MetImageProcessor,
+            'tracker_class': MetProgressTracker, 
             'museum_info': museum_info,
             'params': {}
         }
@@ -96,22 +101,24 @@ def download_museum_collection(museum_id: str) -> None:
     cache_dir = museum_paths['cache']
     cache_file = cache_dir / f"{museum_id}_cache.sqlite"
     progress_file = cache_dir / 'processed_ids.json'
-    
     cache_dir.mkdir(parents= True, exist_ok= True)
+    
+    #Initialize progress tracker
+    progress_tracker = museum_config['tracker_class'](
+        progress_file= progress_file)
     
     # Initialize components with museum-specific settings
     client = museum_config['client_class'](
         museum_info = museum_config['museum_info'],
         api_key = settings.museums[museum_id].api_key,
-        cache_file = cache_file
+        cache_file = cache_file,
+        progress_tracker = progress_tracker
     )
     
     image_processor = museum_config['processor_class'](
         output_dir=museum_paths['images'],
         museum_info= museum_config['museum_info']
     )
-    
-    progress_tracker = ProgressTracker(progress_file)
     
     downloader = ArtworkDownloader(
         client=client,

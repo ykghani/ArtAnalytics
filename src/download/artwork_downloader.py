@@ -5,8 +5,10 @@ from pathlib import Path
 import requests
 
 from ..museums.base import MuseumAPIClient, MuseumImageProcessor
+from ..museums.aic import AICProgressTracker
+from ..museums.met import MetProgressTracker
 from ..museums.schemas import ArtworkMetadata
-from .progress_tracker import ProgressTracker
+from .progress_tracker import BaseProgressTracker, ProgressState
 from ..config import Settings
 from ..database.database import Database
 from ..database.models import Base
@@ -19,7 +21,7 @@ class ArtworkDownloader:
         self,
         client: MuseumAPIClient,
         image_processor: MuseumImageProcessor,
-        progress_tracker: ProgressTracker,
+        progress_tracker: BaseProgressTracker,
         settings = Settings 
     ):
         self.client = client
@@ -135,9 +137,6 @@ class ArtworkDownloader:
             error_msg = f'Failed to process {artwork_info}: {str(e)}'
             logging.error(error_msg)
             self._handle_error(artwork_metadata.id, str(e))
-        
-        finally:
-            time.sleep(self.rate_limit_delay)
 
 
     def download_collection(self, params: Dict[str, Any]) -> None:
@@ -150,22 +149,35 @@ class ArtworkDownloader:
 
         try:
             artwork_iterator = self.client.iter_collection(**params)
+            
             while True:
-                try: 
+                try:
+                    # Get next artwork
                     try:
                         artwork = next(artwork_iterator)
+                        
+                        # Update AIC-specific page tracking if applicable
+                        if isinstance(self.progress_tracker, AICProgressTracker) and hasattr(artwork, 'page'):
+                            self.progress_tracker.update_page(artwork.page)
+                        # Update Met-specific total objects if applicable
+                        elif isinstance(self.progress_tracker, MetProgressTracker):
+                            if hasattr(artwork, 'total_objects'):
+                                self.progress_tracker.state.total_objects = artwork.total_objects
+                            self.progress_tracker.state.last_object_id = artwork.id
+                            
                     except StopIteration:
                         process_completed = True
                         completion_reason = 'Reached end of collection'
-                        logging.info(f'No more art to process - reached end of collection')
+                        logging.info('No more art to process - reached end of collection')
                         break
                     
+                    # Skip if already processed
                     if self.progress_tracker.is_processed(artwork.id):
                         logging.debug(f'Skipping already processed art ID: {artwork.id}')
                         continue
                     
-                    #Download artwork 
-                    try: 
+                    # Download artwork
+                    try:
                         self.download_artwork(artwork)
                         consecutive_errors = 0
                     except requests.exceptions.HTTPError as e:
@@ -179,7 +191,7 @@ class ArtworkDownloader:
                         
                         if consecutive_errors >= max_consecutive_errors:
                             completion_reason = f'Exceeded max consecutive errors {max_consecutive_errors}'
-                            break 
+                            break
                         
                         time.sleep(self.error_rate_delay)
                         
@@ -189,6 +201,7 @@ class ArtworkDownloader:
                         
                         if consecutive_errors >= max_consecutive_errors:
                             logging.error("Too many consecutive errors, stopping download")
+                            completion_reason = 'Too many consecutive errors'
                             break
                         
                         time.sleep(self.error_rate_delay)
@@ -197,25 +210,24 @@ class ArtworkDownloader:
                 
                 except Exception as e:
                     consecutive_errors += 1
-                    logging.error(f"Error downloading artwork {artwork.id}: {e}")
+                    logging.error(f"Error in main download loop: {e}")
                     
                     if consecutive_errors >= max_consecutive_errors:
                         logging.error("Too many consecutive errors, stopping download")
+                        completion_reason = 'Too many consecutive errors in main loop'
                         break
                     
                     time.sleep(self.error_rate_delay)
-                
-                time.sleep(self.rate_limit_delay)
-            
+        
+        except Exception as e:
+            logging.error(f"Fatal error in collection download: {e}")
+            completion_reason = f'Fatal error: {str(e)}'
+            raise
+        
         finally:
             # Generate and log summary regardless of how we exit
             summary = self._generate_summary_report()
             self._log_summary(summary)
-            
-            if process_completed:
-                logging.info(f"Download process completed: {completion_reason}")
-            else:
-                logging.warning(f"Download process ended before completion: {completion_reason}")
 
     def _process_page(self, artworks: List[Dict[str, Any]]) -> None:
         """Process a page of artwork data."""
@@ -252,22 +264,23 @@ class ArtworkDownloader:
     
     def _generate_summary_report(self) -> Dict[str, Any]:
         """Generate summary statistics for the download process."""
-        total_processed = len(self.progress_tracker.download_log['all'])
-        successful = len(self.progress_tracker.download_log['success'])
-        failed = len(self.progress_tracker.download_log['failed'])
+        stats = self.progress_tracker.get_statistics()
         
         total_size_gb = self._total_size_bytes / (1024**3)
-        avg_size_mb = (self._total_size_bytes / max(successful, 1)) / (1024**2)
+        avg_size_mb = (self._total_size_bytes / max(stats['successful'], 1)) / (1024**2)
+        
+        success_rate = 0
+        if stats['total_processed'] > 0:
+            success_rate = (stats['successful'] / stats['total_processed']) * 100
         
         return {
-            'total_processed': total_processed,
-            'successful_downloads': successful,
-            'failed_downloads': failed,
-            'success_rate': f"{(successful/max(total_processed, 1))*100:.2f}%",
+            'total_processed': stats['total_processed'],
+            'successful_downloads': stats['successful'],
+            'failed_downloads': stats['failed'],
+            'success_rate': f"{success_rate:.2f}%",
             'total_storage_used': f"{total_size_gb:.2f}GB",
             'average_file_size': f"{avg_size_mb:.2f}MB",
-            'last_page_processed': self.progress_tracker.get_last_page(),
-            'error_breakdown': self.progress_tracker.download_log.get('other_error', {})
+            'error_count': stats['error_count']
         }
 
     def _log_summary(self, summary: Dict[str, Any]) -> None:
@@ -281,11 +294,11 @@ class ArtworkDownloader:
         logging.info(f"Success Rate: {summary['success_rate']}")
         logging.info(f"Total Storage Used: {summary['total_storage_used']}")
         logging.info(f"Average File Size: {summary['average_file_size']}")
-        logging.info(f"Last Page Processed: {summary['last_page_processed']}")
+        logging.info(f"Error Count: {summary['error_count']}")
         
-        if summary['error_breakdown']:
+        if summary.get('error_breakdown'):
             logging.info("\nError Breakdown:")
-            for error_type, errors in summary['error_breakdown'].items():
-                logging.info(f"  {error_type}: {len(errors)} occurrences")
+            for error_type, count in summary['error_breakdown'].items():
+                logging.info(f"  {error_type}: {count} occurrences")
         
         logging.info("=" * 50)
