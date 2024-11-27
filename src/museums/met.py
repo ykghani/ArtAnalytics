@@ -42,7 +42,7 @@ class MetClient(MuseumAPIClient):
             raise ValueError("No image URL provided")
     
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Implement ID-based collection iteration for Met'''
+        '''Implement ID-based collection iteration for Met with resumption'''
         try:
             # Get all object IDs first
             url = f"{self.museum_info.base_url}/objects"
@@ -56,32 +56,46 @@ class MetClient(MuseumAPIClient):
             if not object_ids:
                 logging.warning(f"No objects found matching criteria. Total: {total_ids}")
                 return
-                
-            logging.info(f"Found {total_ids} objects to process")
             
-            #Find starting point based off latest progress
+            # Find starting point if we have a progress tracker
+            start_idx = 0
             if isinstance(self.progress_tracker, MetProgressTracker):
                 last_id = self.progress_tracker.state.last_object_id
-                start_idx = 0
-                
-                if last_id is not None: 
+                if last_id is not None:
                     try:
-                        start_idx = object_ids.index(last_id) + 1
-                    except ValueError:
+                        # Find where we left off and add 1 to start with next item
+                        start_idx = object_ids.index(int(last_id)) + 1
+                        logging.info(f"Resuming from object ID {last_id} (index {start_idx})")
+                    except (ValueError, TypeError) as e:
+                        logging.warning(f"Could not find last processed ID {last_id}, starting from beginning: {e}")
                         start_idx = 0
             
-                # Iterate through IDs
-                for object_id in object_ids:
-                    try:
-                        artwork = self._get_artwork_details_impl(str(object_id))
-                        if artwork:  # Only yield if we got valid artwork data
-                            if isinstance(self.progress_tracker, MetProgressTracker):
-                                self.progress_tracker.state.total_objects = total_ids
-                                self.progress_tracker.state.last_object_id = str(object_id)
-                                yield artwork
-                    except Exception as e:
-                        logging.error(f"Error getting metadata from artwork {object_id}: {e}")
-                        continue
+            # Resume from last position
+            remaining_ids = object_ids[start_idx:]
+            total_remaining = len(remaining_ids)
+            logging.info(f"Processing {total_remaining} objects starting from index {start_idx}")
+            
+            # Add progress logging
+            progress_interval = max(1, total_remaining // 100)  # Log every 1% progress
+            
+            # Iterate through remaining IDs
+            for idx, object_id in enumerate(remaining_ids):
+                # Log progress periodically
+                if idx % progress_interval == 0:
+                    progress = (idx / total_remaining) * 100
+                    logging.info(f"Progress: {progress:.1f}% - Processing object {object_id} ({idx}/{total_remaining})")
+                
+                try:
+                    artwork = self._get_artwork_details_impl(str(object_id))
+                    if artwork:
+                        # Update progress tracker state
+                        if isinstance(self.progress_tracker, MetProgressTracker):
+                            self.progress_tracker.state.total_objects = total_ids
+                            self.progress_tracker.state.last_object_id = str(object_id)
+                        yield artwork
+                except Exception as e:
+                    logging.error(f"Error getting metadata for artwork {object_id}: {e}")
+                    continue
 
         except Exception as e:
             logging.error(f"Error fetching object IDs: {e}")
@@ -92,9 +106,12 @@ class MetClient(MuseumAPIClient):
         url = f"{self.museum_info.base_url}/objects/{object_id}"
         
         try:
+            logging.debug(f"Fetching details for artwork {object_id}")
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
-            return ArtworkMetadata.from_met_response(response.json())
+            artwork = ArtworkMetadata.from_met_response(response.json())
+            logging.debug(f"Successfully fetched artwork {object_id}")
+            return artwork
         
         except Exception as e:
             logging.error(f"Error fetching details for artwork {object_id}: {e}")

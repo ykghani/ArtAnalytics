@@ -13,8 +13,10 @@ from ..utils import sanitize_filename
 class AICClient(MuseumAPIClient):
     """Art Institute of Chicago API Client implementation"""
     
-    def __init__(self, museum_info: MuseumInfo, api_key: Optional[str] = None, cache_file: Optional[Path] = None):
-        super().__init__(museum_info= museum_info, api_key= api_key, cache_file= cache_file)
+    def __init__(self, museum_info: MuseumInfo, api_key: Optional[str] = None, 
+                 cache_file: Optional[Path] = None, progress_tracker: Optional[BaseProgressTracker] = None):
+        super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
+        self.progress_tracker = progress_tracker
     
     def _get_auth_header(self) -> str:
         if not self.api_key:
@@ -23,20 +25,29 @@ class AICClient(MuseumAPIClient):
     
     def get_artwork_page(self, page: int, params: Dict[str, Any]) -> Dict[str, Any]:
         """Fetch a page of artworks"""
-        base_url = self.museum_info.base_url.rstrip('/artworks')
-        url = f"{self.museum_info.base_url}/artworks"
+        url = f"{self.museum_info.base_url}"  # base_url already includes /artworks
         params['page'] = page
+        
+        logging.debug(f"Requesting url: {url} with params: {params}")
+        
         response = self.session.get(url, params=params, timeout=(5, 30))
         response.raise_for_status()
         return response.json()
     
     def _get_artwork_details_impl(self, artwork_id: str) -> ArtworkMetadata:
         '''Implement artwork details fetching for AIC'''
-        url = f"{self.museum_info.base_url}/artworks/{artwork_id}"
-        response = self.session.get(url, timeout=(5, 30))
-        response.raise_for_status()
-        data = response.json()['data']
-        return ArtworkMetadata.from_aic_response(data)
+        url = f"{self.museum_info.base_url}/{artwork_id}"
+        
+        # Add debug logging
+        logging.debug(f"Fetching artwork details from: {url}")
+        
+        try:
+            response = self.session.get(url, timeout=(5, 30))
+            response.raise_for_status()
+            return ArtworkMetadata.from_aic_response(response.json()['data'])
+        except Exception as e:
+            logging.error(f"Error fetching details for artwork {artwork_id}: {e}")
+            raise
     
     def get_departments(self) -> Dict[str, Any]:
         """Get department listings"""
@@ -59,23 +70,65 @@ class AICClient(MuseumAPIClient):
         return response.json()
         
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Implement paginated collection iteration for AIC'''
-        page = 1
-        while True:
-            response = self.get_artwork_page(page, params)
-            if not response or not response.get('data'):
-                break
-                
-            for item in response['data']:
+        '''Implement paginated collection iteration for AIC with resumption'''
+        try:
+            # Determine starting page from progress tracker
+            start_page = 1
+            if isinstance(self.progress_tracker, AICProgressTracker):
+                last_page = self.progress_tracker.get_last_page()
+                if last_page > 0:
+                    start_page = last_page
+                    logging.info(f"Resuming from page {start_page}")
+            
+            current_page = start_page
+            while True:
                 try:
-                    artwork = self._get_artwork_details_impl(str(item['id']))
-                    yield artwork
-                except Exception as e:
-                    logging.error(f"Error processing artwork {item['id']}: {e}")
-                    continue
+                    # Get page of artworks
+                    response = self.get_artwork_page(current_page, params)
+                    if not response or not response.get('data'):
+                        break
                     
-            page += 1
-    
+                    for item in response['data']:
+                        try:
+                            artwork = self._get_artwork_details_impl(str(item['id']))
+                            if artwork:
+                                # Add page info to artwork metadata
+                                artwork.page = current_page
+                                # Update progress tracker
+                                if isinstance(self.progress_tracker, AICProgressTracker):
+                                    self.progress_tracker.update_page(current_page)
+                                yield artwork
+                        except Exception as e:
+                            logging.error(f"Error processing artwork {item['id']}: {e}")
+                            continue
+                    
+                    current_page += 1
+                    
+                except Exception as e:
+                    logging.error(f"Error processing page {current_page}: {e}")
+                    raise
+                    
+        except Exception as e:
+            logging.error(f"Error in collection iteration: {e}")
+            raise
+            
+    def get_collection_info(self) -> Dict[str, Any]:
+        """Get basic collection information"""
+        url = f"{self.museum_info.base_url}/search"
+        params = {'limit': 0}  # Just get total count, no results
+        
+        try:
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            return {
+                'total_objects': data.get('pagination', {}).get('total', 0)
+            }
+        except Exception as e:
+            logging.error(f"Error getting collection info: {e}")
+            return {'total_objects': 0}
+        
 class AICImageProcessor(MuseumImageProcessor):
     """Art Institute of Chicago image processor implementation"""
     
