@@ -1,13 +1,49 @@
 import sys
 import logging
 from pathlib import Path 
-from typing import Dict, Any
+from typing import Dict, Any, List 
+import concurrent.futures
 
 from src.config import settings, LogLevel
 from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
 from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
+from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
+
+def download_museum_collection_wrapper(args: tuple) -> None:
+    '''Wrapper function to unpack arguments for concurrent execution'''
+    museum_id, settings = args
+    try:
+        download_museum_collection(museum_id= museum_id)
+    except Exception as e:
+        logging.error(f"Error downloading from {museum_id}: {e}")
+        raise
+
+def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None: 
+    '''Run multiple museum downloaders in parallel
+    
+    Args:
+        museum_ids: List of museum IDs to process
+        max_workers: Max number of concurrent downloads
+    '''
+    
+    #Create args for each download task
+    download_args = [(museum_id, settings) for museum_id in museum_ids]
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers= max_workers) as executor:
+        future_to_museum = {
+            executor.submit(download_museum_collection_wrapper, args): args[0]
+            for args in download_args
+        }
+        
+        for future in concurrent.futures.as_completed(future_to_museum):
+            museum_id = future_to_museum[future]
+            try:
+                future.result()
+                logging.info(f"Successfully completed download for {museum_id}")
+            except Exception as e: 
+                logging.error(f"Download failed for {museum_id}: {e}")
 
 def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
     '''Configure logging for application based on specific log level'''
@@ -43,7 +79,8 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
     """Create MuseumInfo instance based on museum configuration"""
     museum_names = {
         'aic': "Art Institute of Chicago",
-        'met': "Metropolitan Museum of Art"
+        'met': "Metropolitan Museum of Art",
+        'cma': "Cleveland Museum of Art"
     }
     
     return MuseumInfo(
@@ -83,7 +120,19 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             'processor_class': MetImageProcessor,
             'tracker_class': MetProgressTracker, 
             'museum_info': museum_info,
-            'params': {}
+            'params': {
+                'departmentIds': '4|9|11|14|'
+            }
+        },
+        'cma': {
+            'client_class': CMAClient,
+            'processor_class': CMAImageProcessor,
+            'tracker_class': CMAProgressTracker,
+            'museum_info': museum_info,
+            'params': {
+                'has_image': 1,
+                'cc0': None
+            }
         }
     }
     
@@ -137,22 +186,26 @@ def main():
     
     # Setup logging with configured level
     setup_logging(settings.logs_dir, settings.log_level)
-
-    # Parse command line args
-    if len(sys.argv) != 2:
-        print("Usage: python main.py <museum_id>")
-        print(f"Available museums: {', '.join(settings.museums.keys())}")
+    
+    if len(sys.argv) > 1:
+        museum_ids = sys.argv[1: ]
+    else:
+        museum_ids = list(settings.museums.keys())
+    
+    valid_museums = set(settings.museums.keys())
+    invalid_museums = set(museum_ids) - valid_museums
+    if invalid_museums:
+        print(f"Invalid museum IDs: {', '.join(invalid_museums)}")
+        print(f"Available museums: {', '.join(valid_museums)}")
         sys.exit(1)
     
-    museum_id = sys.argv[1].lower()
-    
     try:
-        download_museum_collection(museum_id)
+        run_parallel_downloads(museum_ids)
     except KeyboardInterrupt:
-        logging.info("Download process interrupted by user")
+        logging.info(f"Download process interrupted by user")
         sys.exit(0)
     except Exception as e: 
-        logging.error(f'Error in downloading process: {e}')
+        logging.error(f'Error in download process: {e}')
         sys.exit(1)
 
 if __name__ == "__main__":

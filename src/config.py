@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     met_api_base_url: str = Field(default="https://collectionapi.metmuseum.org/public/collection/v1", env='MET_API_BASE_URL')
     met_user_agent: str = Field(default="MET-ArtDownloadBot/1.0", env='MET_USER_AGENT')
     met_rate_limit: float = Field(default=80.0, env='MET_RATE_LIMIT')
+    
+    cma_api_base_url: str = Field(default="https://openaccess-api.clevelandart.org/api", env='CLEVELAND_API_BASE_URL')
+    cma_user_agent: str = Field(default="Cleveland-ArtDownloadBot/1.0", env='CLEVELAND_USER_AGENT')
+    cma_rate_limit: float = Field(default=80.0, env='CLEVELAND_RATE_LIMIT')
 
     def get_museum_info(self, museum_id: str) -> MuseumInfo:
         """Get MuseumInfo for a specific museum"""
@@ -80,6 +84,14 @@ class Settings(BaseSettings):
                 contact_email=self.default_contact_email,
                 code='met',
                 name='Metropolitan Museum of Art'
+            ),
+            'cma': MuseumConfig(
+                api_base_url= self.cma_api_base_url,
+                user_agent= self.cma_user_agent,
+                rate_limit= self.cma_rate_limit,
+                contact_email=self.default_contact_email,
+                code= 'cma',
+                name= 'Cleveland Museum of Art'
             )
         }
     
@@ -118,7 +130,8 @@ class Settings(BaseSettings):
         #Museum specific directories
         self.museum_dirs = {
             'aic': self.data_dir / 'aic',
-            'met': self.data_dir / 'met'
+            'met': self.data_dir / 'met',
+            'cma': self.data_dir / 'cma'
         }
         
         for museum, base_dir in self.museum_dirs.items():

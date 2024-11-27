@@ -7,6 +7,7 @@ import requests
 from ..museums.base import MuseumAPIClient, MuseumImageProcessor
 from ..museums.aic import AICProgressTracker
 from ..museums.met import MetProgressTracker
+from ..museums.cma import CMAProgressTracker
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import BaseProgressTracker, ProgressState
 from ..config import Settings
@@ -161,6 +162,10 @@ class ArtworkDownloader:
                             self.progress_tracker.update_page(artwork.page)
                         # Update Met-specific total objects if applicable
                         elif isinstance(self.progress_tracker, MetProgressTracker):
+                            if hasattr(artwork, 'total_objects'):
+                                self.progress_tracker.state.total_objects = artwork.total_objects
+                            self.progress_tracker.state.last_object_id = artwork.id
+                        elif isinstance(self.progress_tracker, CMAProgressTracker):
                             if hasattr(artwork, 'total_objects'):
                                 self.progress_tracker.state.total_objects = artwork.total_objects
                             self.progress_tracker.state.last_object_id = artwork.id

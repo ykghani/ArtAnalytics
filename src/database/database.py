@@ -24,7 +24,8 @@ class Database:
         from .models import Museum
         museums = [
             {'code': 'met', 'name': 'Metropolitan Museum of Art'},
-            {'code': 'aic', 'name': 'Art Institute of Chicago'}
+            {'code': 'aic', 'name': 'Art Institute of Chicago'},
+            {'code': 'cma', 'name': 'Cleveland Museum of Art'}
         ]
         
         for museum_data in museums:
