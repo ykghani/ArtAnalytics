@@ -121,7 +121,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             'tracker_class': MetProgressTracker, 
             'museum_info': museum_info,
             'params': {
-                'departmentIds': '4|9|11|14|'
+                'departmentIds': '1|4|9|11|14|15|19|21'
             }
         },
         'cma': {
