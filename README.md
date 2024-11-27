@@ -1,58 +1,76 @@
 # Art Institute of Chicago Image Downloader
 
-A Python script to download public domain images from the Art Institute of Chicago's API. This project provides functionality to systematically download and manage artwork images, with robust error handling and detailed logging.
+A Python application for downloading and managing artwork data and images from major museum APIs, including the Metropolitan Museum of Art, Art Institute of Chicago, and Cleveland Museum of Art. More museums will be added over time 
 
 ## Features
 
-- Downloads public domain images from AIC's API
-- Handles API rate limiting and network issues
-- Tracks download progress and can resume interrupted downloads
-- Sanitizes filenames for cross-platform compatibility
-- Provides detailed logging of the download process
-- Includes error recovery and retry mechanisms
-- Generates reports for failed downloads
+Multi-museum support with standardized data model
+Parallel downloading of artwork data and images
+Resume-capable downloads with progress tracking
+SQLite database for storing artwork metadata
+Rate limiting and error handling
+Support for public domain image downloads
+Museum-specific image processing and filename generation
 
 ## Project Structure
 
 ```
-ArtAnalytics/
-├── src/                # Source code
-│   ├── __init__.py
-│   ├── download.py    # Main download functionality
-│   └── utils.py       # Utility functions
-├── data/              # Data directory (not tracked in Git)
-│   ├── raw/          # Downloaded images
-│   └── processed/    # Processed data files
-├── logs/              # Log files (not tracked in Git)
-├── notebooks/         # Jupyter notebooks for analysis
-├── requirements.txt   # Project dependencies
-├── main.py           # Main execution script
-└── README.md         # This file
+├── data/                      # Data storage
+│   ├── aic/                  # AIC-specific data
+│   ├── met/                  # MET-specific data 
+│   └── cma/                  # CMA-specific data
+├── src/
+│   ├── museums/             # Museum API clients
+│   │   ├── aic.py
+│   │   ├── met.py 
+│   │   ├── cma.py
+│   │   └── schemas.py
+│   ├── database/            # Database models and operations
+│   │   ├── models.py
+│   │   └── repository.py
+│   ├── download/            # Download management
+│   │   ├── artwork_downloader.py
+│   │   └── progress_tracker.py
+│   └── utils.py             # Shared utilities
+├── alembic/                  # Database migrations
+├── tests/                    # Test suite
+├── poetry.lock              # Poetry lock file
+├── pyproject.toml           # Project metadata and dependencies
+└── README.md
 ```
+
+## Requirements
+1. Python 3.12+
+2. Poetry for dependency management
 
 ## Setup
 
 1. **Clone the repository**
 ```bash
-git clone https://github.com/yourusername/ArtAnalytics.git
-cd ArtAnalytics
+git clone https://github.com/yourusername/art-museum-collection.git
+cd art-museum-collection
 ```
 
-2. **Create and activate virtual environment**
+2. **Install dependencies using poetry**
 ```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
+poetry install
 ```
 
-3. **Install dependencies**
-```bash
-pip install -r requirements.txt
+3. **Configure settings**
+Create a .env file in your project root with downloader settings specified
+```env
+# Logging
+LOG_LEVEL=verbose
+
+# Download settings
+BATCH_SIZE=100
+RATE_LIMIT_DELAY=1.0 
+ERROR_RETRY_DELAY=5.0
+MAX_RETRIES=5
+
+# Museum API settings
+AIC_USER_AGENT=YourUserAgent/1.0
+MET_RATE_LIMIT=80.0
 ```
 
 4. **Configure API settings**
@@ -63,30 +81,16 @@ pip install -r requirements.txt
 
 ### Basic Usage
 
-Run the main script to start downloading images:
+Run the main script to start downloading images for all museums
 ```bash
-python main.py
+poetry run python main.py 
 ```
 
-### Recovering Failed Downloads
+### Downloading from a specific museum 
 
 To retry failed downloads:
-```python
-from src.download import AICDownloader
-
-downloader = AICDownloader()
-downloader.recover_failed_downloads()
-```
-
-### Downloading Specific Artworks
-
-To download specific artwork IDs:
-```python
-from src.download import AICDownloader
-
-downloader = AICDownloader()
-id_list = [123456, 789012]  # Replace with desired AIC IDs
-downloader.download_specific_ids(id_list)
+```bash
+poetry run python main.py aic # could also pass in met or cma 
 ```
 
 ## Error Handling
@@ -103,7 +107,6 @@ Failed downloads are logged and can be retried using the recovery functions.
 ## Logging
 
 Logs are stored in the `logs/` directory:
-- `aic_downloader.log`: Main application log
 - Detailed download progress and error information
 - Download statistics and summaries
 
@@ -119,15 +122,6 @@ Example:
 123456_Starry Night_Vincent van Gogh.jpg
 ```
 
-## Dependencies
-
-Main dependencies include:
-- requests
-- Pillow (PIL)
-- requests-cache
-- logging
-
-See `requirements.txt` for complete list.
 
 ## Contributing
 
@@ -143,8 +137,10 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ## Acknowledgments
 
-- Art Institute of Chicago for providing the public API
+- Art Institute of Chicago, Metropolitan Museum of Art, and Cleveland Museum of Art for providing the public APIs
 - [AIC API Documentation](https://api.artic.edu/docs/)
+- [Met API Documentation](https://metmuseum.github.io)
+- [CMA API Documentation](https://www.clevelandart.org/open-access-api)
 
 ## Notes
 
