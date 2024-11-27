@@ -101,6 +101,21 @@ class MetClient(MuseumAPIClient):
         logging.info(f"Fetched and cached {len(objects)} object IDs")
         return objects
 
+    def _get_unprocessed_ids(self, object_ids: List[int]) -> List[int]:
+        """Filter out already processed IDs"""
+        if not self.progress_tracker:
+            return object_ids
+            
+        # Convert all IDs to strings for consistent comparison
+        str_ids = set(str(id) for id in object_ids)
+        processed_ids = self.progress_tracker.state.processed_ids
+        
+        # Get unprocessed IDs
+        unprocessed_ids = str_ids - processed_ids
+        
+        # Convert back to integers and sort
+        return sorted(int(id) for id in unprocessed_ids)
+
     def _load_cached_object_ids(self) -> Optional[List[int]]:
         """Load object IDs from cache file if it exists and is recent"""
         if not self.object_ids_cache_file or not self.object_ids_cache_file.exists():
@@ -140,43 +155,37 @@ class MetClient(MuseumAPIClient):
             if not object_ids:
                 logging.warning("No objects found matching criteria")
                 return
-                
-            # Find starting point
-            start_idx = 0
-            if isinstance(self.progress_tracker, MetProgressTracker):
-                last_id = self.progress_tracker.state.last_object_id
-                if last_id and last_id in object_ids:
-                    start_idx = object_ids.index(int(last_id)) + 1
-                    logging.info(f"Resuming from object ID {last_id} (index {start_idx})")
             
-            remaining_ids = object_ids[start_idx:]
-            total_remaining = len(remaining_ids)
-            progress_interval = max(1, min(1000, total_remaining // 100))  # More frequent updates
+            unprocessed_ids = self._get_unprocessed_ids(object_ids)
+            total_remaining = len(unprocessed_ids)
             
-            logging.info(f"Starting processing of {total_remaining} remaining objects")
+            if total_remaining == 0: 
+                logging.info(f"All items have been processed.")
+                return
             
-            for idx, object_id in enumerate(remaining_ids):
+            logging.info(f"Found {total_remaining} unprocessed objects out of {len(object_ids)} total")
+            
+            progress_interval = max(1, total_remaining // 100)
+            
+            for idx, object_id in enumerate(unprocessed_ids):
                 if idx % progress_interval == 0:
                     progress = (idx / total_remaining) * 100
-                    processed = idx + start_idx
-                    logging.info(f"Progress: {progress:.1f}% ({processed:,}/{len(object_ids):,})")
-                
+                    logging.info(f"Progress: {progress:.1f}% ({idx}/{total_remaining})")
+                    
                 try:
-                    logging.debug(f"Processing object ID: {object_id}")
                     artwork = self._get_artwork_details_impl(str(object_id))
                     if artwork:
                         if isinstance(self.progress_tracker, MetProgressTracker):
                             self.progress_tracker.state.total_objects = len(object_ids)
                             self.progress_tracker.state.last_object_id = str(object_id)
-                        logging.info(f"Successfully processed artwork {artwork.id}: {artwork.title} by {artwork.artist}")
                         yield artwork
-                except Exception as e:
+                except Exception as e: 
                     logging.error(f"Error processing artwork {object_id}: {e}")
                     continue
-                    
+            
         except Exception as e:
             logging.error(f"Error in collection iteration: {e}")
-            raise
+            raise 
                 
     def _get_artwork_details_impl(self, object_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Met'''
@@ -251,4 +260,3 @@ class MetProgressTracker(BaseProgressTracker):
         self.state.error_log = data.get('error_log', {})
         self.state.total_objects = data.get('total_objects', 0)
         self.state.last_object_id = data.get('last_object_id')
-        
