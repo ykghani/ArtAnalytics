@@ -74,4 +74,9 @@ class ArtworkMetadata:
             tags = data.get('tags'),
             is_highlight = data.get('isHighlight', False)
         )
+    
+    @classmethod
+    def from_cma_response(cls, data: dict) -> 'ArtworkMetadata':
+        '''Create metadata from CMA response'''
+        pass 
         

@@ -16,6 +16,9 @@ python-dotenv = "^0.21.0"
 requests-cache = "^1.2.1"
 sqlalchemy = "^2.0.36"
 alembic = "^1.14.0"
+fastapi = "^0.115.5"
+redis = "^5.2.0"
+fastapi-cache = "^0.1.0"
 
 [tool.poetry.group.dev.dependencies]
 ipython = "^8.29.0"
