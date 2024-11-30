@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..download.progress_tracker import BaseProgressTracker
-from .schemas import ArtworkMetadata, MuseumInfo
+from .schemas import ArtworkMetadata, MuseumInfo, CMAArtworkFactory
 from ..utils import sanitize_filename
 
+@dataclass
 class CMAProgressState:
     """Separate state class for CMA progress tracking"""
     def __init__(self):
@@ -49,6 +50,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                  progress_tracker: Optional[BaseProgressTracker] = None):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
+        self.artwork_factory = CMAArtworkFactory()
     
     def _get_auth_header(self) -> str:
         '''Cleveland does not require authentication'''
@@ -68,77 +70,35 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         }
 
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Implement paginated collection iteration for Cleveland'''
+        """Iterate through CMA collection objects"""
         try:
-            # Setup pagination
-            skip = 0
-            limit = params.get('limit', 100)
+            url = f"{self.museum_info.base_url}/artworks/"
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
             
-            while True:
-                # Get page of artworks
-                url = f"{self.museum_info.base_url}/artworks/"
-                page_params = {**params, 'skip': skip, 'limit': limit}
+            artworks = data.get('data', [])
+            total_objects = data.get('info', {}).get('total', 0)
+            
+            if not artworks:
+                logging.warning("No objects found matching criteria")
+                return
                 
+            logging.info(f"Retrieved {len(artworks)} objects")
+                
+            for artwork in artworks:
                 try:
-                    response = self.session.get(url, params=page_params)
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    artworks = data.get('data', [])
-                    if not artworks:
-                        break
-                    
-                    for artwork in artworks:
-                        try:
-                            metadata = self._convert_to_metadata(artwork)
-                            if metadata:
-                                if isinstance(self.progress_tracker, CMAProgressTracker):
-                                    self.progress_tracker.state.total_objects = data.get('info', {}).get('total', 0)
-                                yield metadata
-                        except Exception as e:
-                            artwork_id = artwork.get('id', 'unknown')
-                            logging.error(f"Error processing artwork {artwork_id}: {e}")
-                            continue
-                    
-                    skip += limit
-                
+                    metadata = self.artwork_factory.create_metadata(artwork)
+                    if metadata and isinstance(self.progress_tracker, CMAProgressTracker):
+                        self.progress_tracker.state.total_objects = total_objects
+                    yield metadata
                 except Exception as e:
-                    logging.error(f"Error fetching page with skip={skip}: {e}")
-                    raise
-                
+                    logging.error(f"Error processing artwork {artwork.get('id')}: {e}")
+                    continue
+                    
         except Exception as e:
             logging.error(f"Error in collection iteration: {e}")
             raise
-
-    def _convert_to_metadata(self, artwork: Dict[str, Any]) -> ArtworkMetadata:
-        '''Convert Cleveland API response to standardized metadata'''
-        # Extract creator info
-        creators = artwork.get('creators', [])
-        creator_name = creators[0].get('description', 'Unknown') if creators else 'Unknown'
-        
-        # Get the best available image URL
-        images = artwork.get('images', {})
-        image_url = None
-        for image_type in ['web', 'print', 'full']:
-            if image_type in images and 'url' in images[image_type]:
-                image_url = images[image_type]['url']
-                break
-        
-        return ArtworkMetadata(
-            id=str(artwork['id']),
-            title=artwork.get('title', 'Untitled'),
-            artist=creator_name,
-            artist_display=creator_name,
-            date_created=artwork.get('creation_date'),
-            medium=artwork.get('technique'),
-            dimensions=artwork.get('measurements'),
-            credit_line=artwork.get('creditline'),
-            department=artwork.get('department'),
-            is_public_domain=artwork.get('share_license_status') == 'CC0',
-            primary_image_url=image_url,
-            description=artwork.get('description'),
-            is_highlight=artwork.get('is_highlight', False)
-        )
     
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Cleveland'''
@@ -148,7 +108,8 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
             artwork = response.json().get('data', {})
-            return self._convert_to_metadata(artwork)
+            # return self._convert_to_metadata(artwork)
+            return self.artwork_factory.create_metadata(artwork)
             
         except Exception as e:
             logging.error(f"Error fetching details for artwork {artwork_id}: {e}")

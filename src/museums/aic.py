@@ -6,7 +6,7 @@ from io import BytesIO
 from dataclasses import dataclass
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from .schemas import ArtworkMetadata, MuseumInfo
+from .schemas import ArtworkMetadata, MuseumInfo, AICArtworkFactory
 from ..download.progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import sanitize_filename
 
@@ -17,6 +17,7 @@ class AICClient(MuseumAPIClient):
                  cache_file: Optional[Path] = None, progress_tracker: Optional[BaseProgressTracker] = None):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
+        self.artwork_factory = AICArtworkFactory()
     
     def _get_auth_header(self) -> str:
         if not self.api_key:
@@ -44,7 +45,8 @@ class AICClient(MuseumAPIClient):
         try:
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
-            return ArtworkMetadata.from_aic_response(response.json()['data'])
+            # return ArtworkMetadata.from_aic_response(response.json()['data'])
+            return self.artwork_factory.create_metadata(response.json()['data'])
         except Exception as e:
             logging.error(f"Error fetching details for artwork {artwork_id}: {e}")
             raise

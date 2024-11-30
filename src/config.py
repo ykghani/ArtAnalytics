@@ -37,8 +37,29 @@ class MuseumQuerySettings(BaseSettings):
     
     # CMA parameters  
     cma_departments: str = Field(
-        default="African Art|American Painting and Sculpture|Art of the Americas|Chinese Art|Contemporary Art|Decorative Art and Design|Drawings| ",
-        description="Pipe-separated department names for CMA"
+        default='|'.join([
+            'African Art',
+            'American Painting and Sculpture',
+            'Art of the Americas',
+            'Chinese Art',
+            'Contemporary Art',
+            'Decorative Art and Design',
+            'Drawings',
+            'Egyptian and Ancient Near Eastern Art',
+            'European Painting and Sculpture',
+            'Greek and Roman Art',
+            'Indian and South East Asian Art',
+            'Islamic Art',
+            'Japanese Art',
+            'Korean Art',
+            'Medieval Art',
+            'Modern European Painting and Sculpture',
+            'Oceania',
+            'Photography',
+            'Prints',
+            'Textiles']
+        ),
+        description="Pipe-separated department names for CMA, excludes depts that don't translate well to digital use cases (e.g., Performing Arts, Music & Film)"
     )
     cma_types: str = Field(
         default="Drawing|Painting|Photograph|Print",
@@ -67,7 +88,7 @@ class MuseumQuerySettings(BaseSettings):
         """Get CMA query parameters"""
         return {
             'department': self.cma_departments,
-            'type': self.cma_types,
+            # 'type': self.cma_types,
             'has_image': 1,
             'cc0': None
         }
