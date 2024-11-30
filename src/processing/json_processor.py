@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-from ..config import settings
+from ..settings.config import settings
 from ..utils import setup_logging
 
 class ArtworkJSONProcessor: 

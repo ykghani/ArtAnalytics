@@ -4,7 +4,7 @@ from pathlib import Path
 import logging
 from typing import Protocol, runtime_checkable
 
-from ..museums.schemas import ArtworkMetadata
+from ..museums.schemas.artwork_metadata import ArtworkMetadata
 
 @runtime_checkable
 class FilenameGenerator(Protocol):

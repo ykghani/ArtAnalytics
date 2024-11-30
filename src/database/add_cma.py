@@ -1,5 +1,5 @@
 from src.database.database import Database
-from src.config import settings
+from src.settings.config import settings
 
 def add_cma_museum():
     """Add CMA museum to existing database"""

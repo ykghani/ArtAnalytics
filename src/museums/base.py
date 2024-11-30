@@ -7,7 +7,9 @@ import logging
 from pathlib import Path
 import requests_cache
 
-from .schemas import ArtworkMetadata, MuseumInfo
+from .schemas import ArtworkMetadata
+from ..settings.types import MuseumInfo
+from ..settings import settings
 from ..utils import sanitize_filename
 
 class MuseumAPIClient(ABC): 
@@ -108,3 +110,28 @@ class MuseumImageProcessor(ABC):
     @abstractmethod
     def generate_filename(self, metadata: ArtworkMetadata) -> str: 
         pass 
+
+class ArtworkMetadataFactory(ABC):
+    """Abstract base factory for creating ArtworkMetadata objects"""
+    
+    @abstractmethod
+    def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
+        """Create ArtworkMetadata from API response data"""
+        pass
+    
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
+        """Helper method to parse date strings to datetime objects"""
+        if not date_str:
+            return None
+        try:
+            if date_str.isdigit():
+                return datetime(year=int(date_str), month=1, day=1)
+            return None  # Handle other date formats as needed
+        except ValueError:
+            return None
+    
+    def _parse_year(self, year_str: str) -> Optional[int]:
+        """Helper method to parse year strings"""
+        if year_str and year_str.isdigit():
+            return int(year_str)
+        return None

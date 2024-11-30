@@ -1,24 +1,51 @@
+from .settings.config import Settings, LogLevel, MuseumConfig, MuseumInfo
+from .database import Database, Base, Museum, Artwork, ArtworkRepository
 from .download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
 from .museums import (
     MuseumAPIClient,
     MuseumImageProcessor,
+    AICClient,
+    AICImageProcessor,
+    MetClient,
+    MetImageProcessor,
+    CMAClient,
+    CMAImageProcessor 
+)
+from .museums.schemas import (
     ArtworkMetadata,
     MuseumInfo,
-    AICClient,
-    AICImageProcessor
+    Dimensions,
+    AICArtworkFactory,
+    MetArtworkFactory,
+    CMAArtworkFactory
 )
-from .config import settings, LogLevel
+# from .utils import sanitize_filename, get_project_root, setup_logging, ensure_directory
 
 __all__ = [
+    'Settings',
+    'LogLevel',
+    'MuseumConfig',
+    'MuseumInfo',
+    'Database',
+    'Base',
+    'Museum',
+    'Artwork',
+    'ArtworkRepository',
     'ArtworkDownloader',
-    'ProgressTracker',
+    'BaseProgressTracker',
     'ImageProcessor',
     'MuseumAPIClient',
     'MuseumImageProcessor',
     'ArtworkMetadata',
+    'Dimensions',
     'MuseumInfo',
     'AICClient',
     'AICImageProcessor',
-    'settings',
-    'LogLevel'
+    'AICArtworkFactory',
+    'MetClient',
+    'METImageProcessor',
+    'MetArtworkFactory',
+    'CMAClient',
+    'CMAImageProcessor',
+    'CMAArtworkFactory'  
 ]

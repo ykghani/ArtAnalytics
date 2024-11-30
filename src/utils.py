@@ -4,7 +4,8 @@ import logging
 from typing import Dict, Any
 import json
 import re
-from .config import settings
+
+from .settings import settings
 
 def get_project_root() -> Path:
     """Get the absolute path to the project root directory."""

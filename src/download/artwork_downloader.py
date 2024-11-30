@@ -4,16 +4,13 @@ from typing import Optional, Dict, List, Any
 from pathlib import Path
 import requests
 
-from ..museums.base import MuseumAPIClient, MuseumImageProcessor
-from ..museums.aic import AICProgressTracker
-from ..museums.met import MetProgressTracker
-from ..museums.cma import CMAProgressTracker
-from ..museums.schemas import ArtworkMetadata
-from .progress_tracker import BaseProgressTracker, ProgressState
-from ..config import Settings
-from ..database.database import Database
-from ..database.models import Base
-from ..database.repository import ArtworkRepository
+from ..museums.base import MuseumAPIClient, MuseumImageProcessor, ArtworkMetadataFactory
+from ..museums.schemas.artwork_metadata import ArtworkMetadata
+from .progress_tracker import BaseProgressTracker
+from ..settings.config import Settings
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..database.repository import ArtworkRepository
 
 class ArtworkDownloader:
     """Generic artwork downloader that works with any museum API client."""

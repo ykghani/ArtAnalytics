@@ -6,8 +6,10 @@ from io import BytesIO
 from dataclasses import dataclass
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from .schemas import ArtworkMetadata, MuseumInfo
-from ..download.progress_tracker import BaseProgressTracker, ProgressState
+from .schemas import ArtworkMetadata, AICArtworkFactory
+from ..download.progress_tracker import BaseProgressTracker
+from ..download.trackers import AICProgressTracker
+from ..settings.types import MuseumInfo
 from ..utils import sanitize_filename
 
 class AICClient(MuseumAPIClient):
@@ -17,6 +19,7 @@ class AICClient(MuseumAPIClient):
                  cache_file: Optional[Path] = None, progress_tracker: Optional[BaseProgressTracker] = None):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
+        self.artwork_factory = AICArtworkFactory()
     
     def _get_auth_header(self) -> str:
         if not self.api_key:
@@ -44,7 +47,8 @@ class AICClient(MuseumAPIClient):
         try:
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
-            return ArtworkMetadata.from_aic_response(response.json()['data'])
+            # return ArtworkMetadata.from_aic_response(response.json()['data'])
+            return self.artwork_factory.create_metadata(response.json()['data'])
         except Exception as e:
             logging.error(f"Error fetching details for artwork {artwork_id}: {e}")
             raise
@@ -159,39 +163,3 @@ class AICImageProcessor(MuseumImageProcessor):
             max_length= 255
         )
 
-@dataclass
-class AICProgressState(ProgressState):
-    last_page: int = 0
-    total_pages: int = 0
-
-class AICProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.state = AICProgressState()
-        super().__init__(progress_file)
-    
-    def get_state_dict(self) -> Dict[str, Any]:
-        return {
-            'processed_ids': list(self.state.processed_ids),
-            'success_ids': list(self.state.success_ids),
-            'failed_ids': list(self.state.failed_ids),
-            'error_log': self.state.error_log,
-            'last_page': self.state.last_page,
-            'total_pages': self.state.total_pages
-        }
-    
-    def restore_state(self, data: Dict[str, Any]) -> None:
-        self.state.processed_ids = set(data.get('processed_ids', []))
-        self.state.success_ids = set(data.get('success_ids', []))
-        self.state.failed_ids = set(data.get('failed_ids', []))
-        self.state.error_log = data.get('error_log', {})
-        self.state.last_page = data.get('last_page', 0)
-        self.state.total_pages = data.get('total_pages', 0)
-    
-    def update_page(self, page: int) -> None: 
-        '''Update last processed page numebr'''
-        self.state.last_page = page
-        self._save_progress()
-    
-    def get_last_page(self) -> int: 
-        '''Get last processed page number'''
-        return self.state.last_page

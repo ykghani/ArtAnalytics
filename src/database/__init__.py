@@ -21,11 +21,8 @@ Example:
         repo = ArtworkRepository(session)
         artwork = repo.get_artwork('met', '123456')
 """
-
 from .database import Database
+from .models import Base, Museum, Artwork
 from .repository import ArtworkRepository
-from .models import Museum, Artwork, Base
 
 __all__ = ['Database', 'Base', 'Museum', 'Artwork', 'ArtworkRepository']
-
-__version__ = '0.1.0'

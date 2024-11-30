@@ -7,39 +7,10 @@ from dataclasses import dataclass, field
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..download.progress_tracker import BaseProgressTracker
-from .schemas import ArtworkMetadata, MuseumInfo
+from .schemas import ArtworkMetadata, CMAArtworkFactory
+from ..settings.types import MuseumInfo
 from ..utils import sanitize_filename
 
-class CMAProgressState:
-    """Separate state class for CMA progress tracking"""
-    def __init__(self):
-        self.processed_ids: Set[str] = set()
-        self.success_ids: Set[str] = set()
-        self.failed_ids: Set[str] = set()
-        self.error_log: Dict[str, Dict[str, str]] = {}
-        self.total_objects: int = 0
-
-class CMAProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.progress_file = progress_file
-        self.state = CMAProgressState()
-        self._load_progress()
-    
-    def get_state_dict(self) -> Dict[str, Any]:
-        return {
-            'processed_ids': list(self.state.processed_ids),
-            'success_ids': list(self.state.success_ids),
-            'failed_ids': list(self.state.failed_ids),
-            'error_log': self.state.error_log,
-            'total_objects': self.state.total_objects
-        }
-    
-    def restore_state(self, data: Dict[str, Any]) -> None:
-        self.state.processed_ids = set(data.get('processed_ids', []))
-        self.state.success_ids = set(data.get('success_ids', []))
-        self.state.failed_ids = set(data.get('failed_ids', []))
-        self.state.error_log = data.get('error_log', {})
-        self.state.total_objects = data.get('total_objects', 0)
 
 class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
     '''Cleveland Museum of Art API Client Implementation'''
@@ -49,6 +20,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                  progress_tracker: Optional[BaseProgressTracker] = None):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
+        self.artwork_factory = CMAArtworkFactory()
     
     def _get_auth_header(self) -> str:
         '''Cleveland does not require authentication'''
@@ -112,33 +84,35 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
     def _convert_to_metadata(self, artwork: Dict[str, Any]) -> ArtworkMetadata:
         '''Convert Cleveland API response to standardized metadata'''
+        return self.artwork_factory.create_metadata(artwork)
+    
         # Extract creator info
-        creators = artwork.get('creators', [])
-        creator_name = creators[0].get('description', 'Unknown') if creators else 'Unknown'
+        # creators = artwork.get('creators', [])
+        # creator_name = creators[0].get('description', 'Unknown') if creators else 'Unknown'
         
-        # Get the best available image URL
-        images = artwork.get('images', {})
-        image_url = None
-        for image_type in ['web', 'print', 'full']:
-            if image_type in images and 'url' in images[image_type]:
-                image_url = images[image_type]['url']
-                break
+        # # Get the best available image URL
+        # images = artwork.get('images', {})
+        # image_url = None
+        # for image_type in ['web', 'print', 'full']:
+        #     if image_type in images and 'url' in images[image_type]:
+        #         image_url = images[image_type]['url']
+        #         break
         
-        return ArtworkMetadata(
-            id=str(artwork['id']),
-            title=artwork.get('title', 'Untitled'),
-            artist=creator_name,
-            artist_display=creator_name,
-            date_created=artwork.get('creation_date'),
-            medium=artwork.get('technique'),
-            dimensions=artwork.get('measurements'),
-            credit_line=artwork.get('creditline'),
-            department=artwork.get('department'),
-            is_public_domain=artwork.get('share_license_status') == 'CC0',
-            primary_image_url=image_url,
-            description=artwork.get('description'),
-            is_highlight=artwork.get('is_highlight', False)
-        )
+        # return ArtworkMetadata(
+        #     id=str(artwork['id']),
+        #     title=artwork.get('title', 'Untitled'),
+        #     artist=creator_name,
+        #     artist_display=creator_name,
+        #     date_created=artwork.get('creation_date'),
+        #     medium=artwork.get('technique'),
+        #     dimensions=artwork.get('measurements'),
+        #     credit_line=artwork.get('creditline'),
+        #     department=artwork.get('department'),
+        #     is_public_domain=artwork.get('share_license_status') == 'CC0',
+        #     primary_image_url=image_url,
+        #     description=artwork.get('description'),
+        #     is_highlight=artwork.get('is_highlight', False)
+        # )
     
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Cleveland'''

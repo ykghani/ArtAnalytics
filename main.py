@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, List 
 import concurrent.futures
 
-from src.config import settings, LogLevel
-from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
+from src.settings.config import settings, LogLevel
+from src.download import ArtworkDownloader, ImageProcessor
 from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker

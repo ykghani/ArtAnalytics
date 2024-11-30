@@ -15,7 +15,8 @@ from requests.sessions import Session as Session
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..download.progress_tracker import ProgressState, BaseProgressTracker
-from .schemas import ArtworkMetadata, MuseumInfo
+from .schemas import ArtworkMetadata, MetArtworkFactory
+from ..settings.types import MuseumInfo
 from ..utils import sanitize_filename
 
 
@@ -26,6 +27,7 @@ class MetClient(MuseumAPIClient):
         super().__init__(museum_info= museum_info, api_key= api_key, cache_file= cache_file)
         self.progress_tracker = progress_tracker
         self.object_ids_cache_file = Path(cache_file).parent / 'object_ids_cache.json' if cache_file else None
+        self.artwork_factory = MetArtworkFactory() 
     
     def _get_auth_header(self) -> str:
         '''Met does not require authentication'''
@@ -195,7 +197,8 @@ class MetClient(MuseumAPIClient):
             logging.debug(f"Fetching details for artwork {object_id}")
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
-            artwork = ArtworkMetadata.from_met_response(response.json())
+            # artwork = ArtworkMetadata.from_met_response(response.json())
+            artwork = self.artwork_factory.create_metadata(response.json())
             logging.debug(f"Successfully fetched artwork {object_id}")
             return artwork
         
@@ -227,36 +230,3 @@ class MetImageProcessor(MuseumImageProcessor):
             artist= metadata.artist,
             max_length= 255
         )
-
-@dataclass 
-class MetProgressState(ProgressState):
-    total_objects: int = 0
-    last_object_id: Optional[str] = None
-    
-    processed_ids: Set[str] = field(default_factory= set)
-    success_ids: Set[str] = field(default_factory= set)
-    failed_ids: Set[str] = field(default_factory= set)
-    error_log: Dict[str, Dict[str, str]] = field(default_factory= dict)
-
-class MetProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.state = MetProgressState()
-        super().__init__(progress_file)
-    
-    def get_state_dict(self) -> Dict[str, Any]:
-        return {
-            'processed_ids': list(self.state.processed_ids),
-            'success_ids': list(self.state.success_ids),
-            'failed_ids': list(self.state.failed_ids),
-            'error_log': self.state.error_log,
-            'total_objects': self.state.total_objects,
-            'last_object_id': self.state.last_object_id
-        }
-    
-    def restore_state(self, data: Dict[str, Any]) -> None:
-        self.state.processed_ids = set(data.get('processed_ids', []))
-        self.state.success_ids = set(data.get('success_ids', []))
-        self.state.failed_ids = set(data.get('failed_ids', []))
-        self.state.error_log = data.get('error_log', {})
-        self.state.total_objects = data.get('total_objects', 0)
-        self.state.last_object_id = data.get('last_object_id')

@@ -1,13 +1,19 @@
-from .met import MetClient, MetImageProcessor, MetProgressTracker
-from .aic import AICClient, AICImageProcessor, AICProgressTracker
-from .cma import CMAClient, CMAImageProcessor, CMAProgressTracker
+# /src/museums/__init__.py
 from .base import MuseumAPIClient, MuseumImageProcessor
-from .schemas import ArtworkMetadata, MuseumInfo
+from .aic import AICClient, AICImageProcessor, AICProgressTracker
+from .met import MetClient, MetImageProcessor, MetProgressTracker
+from .cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 
 __all__ = [
-    'MetClient', 'MetImageProcessor', 'MetProgressTracker',
-    'AICClient', 'AICImageProcessor', 'AICProgressTracker',
-    'CMAClient', 'CMAImageProcessor', 'CMAProgressTracker',
-    'MuseumAPIClient', 'MuseumImageProcessor',
-    'ArtworkMetadata', 'MuseumInfo'
+    'MuseumAPIClient',
+    'MuseumImageProcessor',
+    'AICClient',
+    'AICImageProcessor',
+    'AICProgressTracker',
+    'MetClient',
+    'MetImageProcessor',
+    'MetProgressTracker',
+    'CMAClient',
+    'CMAImageProcessor',
+    'CMAProgressTracker'
 ]
