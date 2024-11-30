@@ -112,7 +112,6 @@ class ArtworkDownloader:
                 response = self.client.session.get(artwork_metadata.primary_image_url)
                 response.raise_for_status()
                 image_data = response.content
-                logging.info(f"Successfully downloaded image data: {len(image_data)} bytes")  # New log
             elif artwork_metadata.image_id:
                 image_url = self.client.build_image_url(artwork_metadata.image_id)
                 response = self.client.session.get(image_url)

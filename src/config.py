@@ -5,12 +5,8 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 from .museums.schemas import MuseumInfo
+from .utils import LogLevel
 
-class LogLevel(str, Enum): 
-    '''Enum for logging levels'''
-    NONE = "none"
-    VERBOSE = "verbose"
-    ERRORS_ONLY = "errors_only"
 
 class MuseumQuerySettings(BaseSettings):
     """Museum-specific API query parameters"""
@@ -263,4 +259,4 @@ class Settings(BaseSettings):
 
 # Create global settings instance
 settings = Settings()
-log_level = LogLevel("verbose")
+log_level = LogLevel("debug")
