@@ -4,6 +4,8 @@ from PIL import Image
 from io import BytesIO
 import logging
 from dataclasses import dataclass, field
+import time
+import json
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..download.progress_tracker import BaseProgressTracker
@@ -51,6 +53,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = CMAArtworkFactory()
+        self.object_ids_cache_file = Path(cache_file).parent / 'cma_object_ids_cache.json' if cache_file else None
     
     def _get_auth_header(self) -> str:
         '''Cleveland does not require authentication'''
@@ -113,33 +116,87 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
             raise
 
     def _get_artwork_ids(self, **params) -> List[int]:
-        """Get list of all artwork IDs matching search parameters"""
+        """Get list of artwork IDs matching search parameters"""
+        # Try cache first (previous cache code remains the same)
+
         all_ids = []
         skip = 0
         limit = 1000
-        
-        # Add fields parameter to only return IDs
-        params['fields'] = 'id'
-        
-        while True:
-            page_params = {**params, 'skip': skip, 'limit': limit}
-            response = self.session.get(f"{self.museum_info.base_url}/artworks/", params=page_params)
+
+        search_params = {
+            **params,
+            'fields': 'id',
+            'skip': skip,
+            'limit': limit
+        }
+
+        try:
+            # First request to get total
+            response = self.session.get(
+                f"{self.museum_info.base_url}/artworks/", 
+                params=search_params,
+                timeout=(5, 30)  # Add timeout
+            )
             response.raise_for_status()
             data = response.json()
             
+            total_available = data.get('info', {}).get('total', 0)
+            logging.info(f"Total artworks available: {total_available}")
+
+            # Get first batch of IDs
             artworks = data.get('data', [])
-            if not artworks:
-                break
-                
-            # Since we're only getting IDs, this can be simplified
             all_ids.extend(art['id'] for art in artworks)
-            skip += limit
             
-            total = data.get('info', {}).get('total', 0)
-            if skip >= total:
-                break
+            # Continue fetching if there are more
+            while len(all_ids) < total_available:
+                skip += limit
+                search_params['skip'] = skip
                 
-        return all_ids
+                try:
+                    logging.debug(f"Requesting artworks with skip={skip}")
+                    response = self.session.get(
+                        f"{self.museum_info.base_url}/artworks/", 
+                        params=search_params,
+                        timeout=(5, 30)
+                    )
+                    
+                    # Log response details if there's an issue
+                    if response.status_code != 200:
+                        logging.error(f"Response status: {response.status_code}")
+                        logging.error(f"Response headers: {dict(response.headers)}")
+                        logging.error(f"Response content: {response.text[:500]}...")  # First 500 chars
+                    
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    artworks = data.get('data', [])
+                    if not artworks:
+                        logging.warning(f"No artworks returned at skip={skip}")
+                        break
+                    
+                    new_ids = [art['id'] for art in artworks]
+                    logging.debug(f"Retrieved {len(new_ids)} new IDs")
+                    all_ids.extend(new_ids)
+                    logging.info(f"Retrieved {len(all_ids)}/{total_available} artwork IDs")
+
+                except requests.Timeout:
+                    logging.error(f"Timeout occurred at skip={skip}")
+                    raise
+                except requests.ConnectionError:
+                    logging.error(f"Connection error at skip={skip}")
+                    raise
+                except Exception as e:
+                    logging.error(f"Error at skip={skip}: {str(e)}")
+                    raise
+
+            # Save to cache before returning
+            self._save_object_ids_cache(all_ids)
+            logging.info(f"Fetched and cached {len(all_ids)} artwork IDs")
+            return all_ids
+
+        except Exception as e:
+            logging.error(f"Error fetching artwork IDs: {str(e)}")
+            raise
 
     def _get_unprocessed_ids(self, artwork_ids: List[int]) -> List[int]:
         """Filter out already processed IDs"""
@@ -151,6 +208,46 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         unprocessed_ids = str_ids - processed_ids
         
         return sorted(int(id) for id in unprocessed_ids)
+
+    def _load_cached_object_ids(self) -> Optional[List[int]]:
+        """Load artwork IDs from cache file if it exists and is recent"""
+        if not self.object_ids_cache_file or not self.object_ids_cache_file.exists():
+            return None
+            
+        try:
+            cache_stat = self.object_ids_cache_file.stat()
+            cache_age = time.time() - cache_stat.st_mtime
+            
+            # Cache expires after 24 hours
+            if cache_age > 60 * 60 * 24:
+                return None
+                
+            with self.object_ids_cache_file.open('r') as f:
+                cached_ids = json.load(f)
+                # Validate cache - don't use if empty
+                if not cached_ids:
+                    logging.warning("Cached ID list is empty, fetching fresh data")
+                    return None
+                return cached_ids
+        except Exception as e:
+            logging.warning(f"Failed to load artwork IDs cache: {e}")
+            # Delete invalid cache file
+            try:
+                self.object_ids_cache_file.unlink(missing_ok=True)
+            except Exception as del_e:
+                logging.warning(f"Failed to delete invalid cache file: {del_e}")
+            return None
+
+    def _save_object_ids_cache(self, artwork_ids: List[int]) -> None:
+        """Save artwork IDs to cache file"""
+        if not self.object_ids_cache_file:
+            return
+            
+        try:
+            with self.object_ids_cache_file.open('w') as f:
+                json.dump(artwork_ids, f)
+        except Exception as e:
+            logging.warning(f"Failed to save artwork IDs cache: {e}")
     
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Cleveland'''
