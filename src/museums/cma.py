@@ -72,33 +72,85 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
         """Iterate through CMA collection objects"""
         try:
-            url = f"{self.museum_info.base_url}/artworks/"
-            response = self.session.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            # First get all artwork IDs
+            artwork_ids = self._get_artwork_ids(**params)
+            logging.info(f"Retrieved {len(artwork_ids)} total artwork IDs")
             
-            artworks = data.get('data', [])
-            total_objects = data.get('info', {}).get('total', 0)
+            if not artwork_ids:
+                logging.warning("No artworks found matching criteria")
+                return
             
-            if not artworks:
-                logging.warning("No objects found matching criteria")
+            # Filter out already processed IDs
+            unprocessed_ids = self._get_unprocessed_ids(artwork_ids)
+            total_remaining = len(unprocessed_ids)
+            
+            if total_remaining == 0:
+                logging.info("All items have been processed.")
                 return
                 
-            logging.info(f"Retrieved {len(artworks)} objects")
-                
-            for artwork in artworks:
+            logging.info(f"Found {total_remaining} unprocessed artworks out of {len(artwork_ids)} total")
+            
+            # Process artworks one by one
+            progress_interval = max(1, total_remaining // 100)
+            for idx, artwork_id in enumerate(unprocessed_ids):
+                if idx % progress_interval == 0:
+                    progress = (idx / total_remaining) * 100
+                    logging.info(f"Progress: {progress:.1f}% ({idx}/{total_remaining})")
+                    
                 try:
-                    metadata = self.artwork_factory.create_metadata(artwork)
-                    if metadata and isinstance(self.progress_tracker, CMAProgressTracker):
-                        self.progress_tracker.state.total_objects = total_objects
-                    yield metadata
+                    artwork = self._get_artwork_details_impl(str(artwork_id))
+                    if artwork:
+                        if isinstance(self.progress_tracker, CMAProgressTracker):
+                            self.progress_tracker.state.total_objects = len(artwork_ids)
+                            self.progress_tracker.state.last_object_id = str(artwork_id)
+                        yield artwork
                 except Exception as e:
-                    logging.error(f"Error processing artwork {artwork.get('id')}: {e}")
+                    logging.error(f"Error processing artwork {artwork_id}: {e}")
                     continue
                     
         except Exception as e:
             logging.error(f"Error in collection iteration: {e}")
             raise
+
+    def _get_artwork_ids(self, **params) -> List[int]:
+        """Get list of all artwork IDs matching search parameters"""
+        all_ids = []
+        skip = 0
+        limit = 1000
+        
+        # Add fields parameter to only return IDs
+        params['fields'] = 'id'
+        
+        while True:
+            page_params = {**params, 'skip': skip, 'limit': limit}
+            response = self.session.get(f"{self.museum_info.base_url}/artworks/", params=page_params)
+            response.raise_for_status()
+            data = response.json()
+            
+            artworks = data.get('data', [])
+            if not artworks:
+                break
+                
+            # Since we're only getting IDs, this can be simplified
+            all_ids.extend(art['id'] for art in artworks)
+            skip += limit
+            
+            total = data.get('info', {}).get('total', 0)
+            if skip >= total:
+                break
+                
+        return all_ids
+
+    def _get_unprocessed_ids(self, artwork_ids: List[int]) -> List[int]:
+        """Filter out already processed IDs"""
+        if not self.progress_tracker:
+            return artwork_ids
+            
+        str_ids = set(str(id) for id in artwork_ids)
+        processed_ids = self.progress_tracker.state.processed_ids
+        unprocessed_ids = str_ids - processed_ids
+        
+        return sorted(int(id) for id in unprocessed_ids)
     
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Cleveland'''

@@ -174,6 +174,7 @@ def download_museum_collection(museum_id: str) -> None:
     )
     
     logging.info(f"Starting download for {museum_id} museum")
+    logging.info(f"Museum params: {museum_config['params']}")
     downloader.download_collection(museum_config['params'])
 
 def main():

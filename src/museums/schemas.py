@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, List, Any
+import logging
 
 @dataclass
 class MuseumInfo:
@@ -102,7 +103,10 @@ class CMAArtworkFactory(ArtworkMetadataFactory):
             if image_type in images and 'url' in images[image_type]:
                 image_url = images[image_type]['url']
                 break
-                
+        
+        # image_url = data.get('images', {}).get('web', {}).get('url')
+        logging.debug(f"Extracted image URL: {image_url}")
+        
         # Extract creator info
         creators = data.get('creators', [])
         creator = creators[0] if creators else {}

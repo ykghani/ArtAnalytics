@@ -87,7 +87,7 @@ class MuseumQuerySettings(BaseSettings):
     def get_cma_params(self) -> Dict[str, Any]:
         """Get CMA query parameters"""
         return {
-            'department': self.cma_departments,
+            # 'department': self.cma_departments,
             # 'type': self.cma_types,
             'has_image': 1,
             'cc0': None

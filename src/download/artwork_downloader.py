@@ -79,10 +79,10 @@ class ArtworkDownloader:
 
     def download_artwork(self, artwork_metadata: ArtworkMetadata) -> None:
         """Download and process a single artwork."""
-        
         try:
-            artwork_info = f"{self.client.museum_info.name} ID: {artwork_metadata.id} '{artwork_metadata.title}' by '{artwork_metadata.artist}"
-            
+            artwork_info = f"{self.client.museum_info.name} ID: {artwork_metadata.id} '{artwork_metadata.title}' by '{artwork_metadata.artist}'"
+            logging.info(f"Processing {artwork_info}")  # New log
+
             # Check if artwork exists in database
             existing_artwork = self.artwork_repo.get_artwork(
                 self.client.museum_info.code, 
@@ -95,44 +95,30 @@ class ArtworkDownloader:
                 return
             
             if not artwork_metadata.is_public_domain:
+                logging.info(f"Skipping {artwork_info} - not public domain")  # New log
                 self.progress_tracker.log_status(artwork_metadata.id, "skipped", "Not public domain")
                 return
             
+            # Log image URL info
+            logging.info(f"Image URL: {artwork_metadata.primary_image_url}")  # New log
+            if not artwork_metadata.primary_image_url and not artwork_metadata.image_id:
+                logging.info(f"No image URL available for {artwork_info}")  # New log
+                self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'No image available')
+                return
+
             # Get image data
             image_data = None
             if artwork_metadata.primary_image_url:
                 response = self.client.session.get(artwork_metadata.primary_image_url)
                 response.raise_for_status()
                 image_data = response.content
-            elif artwork_metadata.image_id:  # AIC approach 
+                logging.info(f"Successfully downloaded image data: {len(image_data)} bytes")  # New log
+            elif artwork_metadata.image_id:
                 image_url = self.client.build_image_url(artwork_metadata.image_id)
                 response = self.client.session.get(image_url)
                 response.raise_for_status()
                 image_data = response.content
-            else:
-                self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'No image available')
-                return
-            
-            image_size = len(image_data)
-            if not self._check_limits(image_size):
-                self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'Download limits reached')
-                return
-            
-            # Process image and get the saved path
-            image_path = self.image_processor.process_image(image_data, artwork_metadata)
-            
-            # Save/update in database
-            self.artwork_repo.create_or_update_artwork(
-                metadata=artwork_metadata,
-                museum_code=self.client.museum_info.code,
-                image_path=str(image_path)
-            )
-            
-            self._download_count += 1
-            self._total_size_bytes += image_size
-            
-            self.progress_tracker.log_status(artwork_metadata.id, 'success')
-            logging.info(f'Successfully processed and saved to database: {artwork_info}')
+                logging.info(f"Successfully downloaded image data: {len(image_data)} bytes")  # New log
             
         except Exception as e:
             error_msg = f'Failed to process {artwork_info}: {str(e)}'
