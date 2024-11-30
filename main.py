@@ -102,6 +102,12 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     museum_config = settings.museums[museum_id]
     museum_info = create_museum_info(museum_id, museum_config)
     museum_paths = settings.get_museum_paths(museum_id)
+    
+    query_params = {
+    'aic': settings.museum_queries.get_aic_params(),
+    'met': settings.museum_queries.get_met_params(),
+    'cma': settings.museum_queries.get_cma_params()
+            }.get(museum_id, {})
         
     configs = {
         'aic': {
@@ -109,30 +115,21 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             'processor_class': AICImageProcessor,
             'tracker_class': AICProgressTracker,
             'museum_info': museum_info,
-            'params': {
-                'is_public_domain': True, 
-                'department_title': 'Prints and Drawings',
-                'fields': 'id,title,artist_display,image_id,department_title,date_display,medium,dimensions,credit_line'
-            }
+            'params': query_params
         },
         'met': {
             'client_class': MetClient,
             'processor_class': MetImageProcessor,
             'tracker_class': MetProgressTracker, 
             'museum_info': museum_info,
-            'params': {
-                'departmentIds': '1|4|9|11|14|15|19|21'
-            }
+            'params': query_params
         },
         'cma': {
             'client_class': CMAClient,
             'processor_class': CMAImageProcessor,
             'tracker_class': CMAProgressTracker,
             'museum_info': museum_info,
-            'params': {
-                'has_image': 1,
-                'cc0': None
-            }
+            'params': query_params
         }
     }
     

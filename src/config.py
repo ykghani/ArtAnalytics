@@ -1,7 +1,7 @@
 from pathlib import Path
 from pydantic import EmailStr, Field
 from pydantic_settings import BaseSettings  
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 from enum import Enum
 
 from .museums.schemas import MuseumInfo
@@ -11,6 +11,66 @@ class LogLevel(str, Enum):
     NONE = "none"
     VERBOSE = "verbose"
     ERRORS_ONLY = "errors_only"
+
+class MuseumQuerySettings(BaseSettings):
+    """Museum-specific API query parameters"""
+    
+    # Met Museum parameters
+    met_departments: str = Field(
+        default="1|9|11|14|15|19|21", #American decorative arts, Drawings & prints, european prints, islamic art, robert lehman collection, photographs, modern art 
+        description="Pipe-separated department IDs for Met Museum"
+    )
+    met_highlight_only: bool = Field(
+        default=False,
+        description="Whether to only fetch highlighted works from Met"
+    )
+    
+    # AIC parameters
+    aic_departments: str = Field(
+        default="Modern Art|Contemporary Art|Prints and Drawings|Photography",
+        description="Pipe-separated department names for AIC"
+    )
+    aic_artwork_types: str = Field(
+        default="Painting|Drawing|Print|Photograph",
+        description="Pipe-separated artwork types for AIC"
+    )
+    
+    # CMA parameters  
+    cma_departments: str = Field(
+        default="African Art|American Painting and Sculpture|Art of the Americas|Chinese Art|Contemporary Art|Decorative Art and Design|Drawings| ",
+        description="Pipe-separated department names for CMA"
+    )
+    cma_types: str = Field(
+        default="Drawing|Painting|Photograph|Print",
+        description="Pipe-separated artwork types for CMA"
+    )
+
+    def get_met_params(self) -> Dict[str, Any]:
+        """Get Met Museum query parameters"""
+        return {
+            'departmentIds': self.met_departments,
+            'isHighlight': self.met_highlight_only,
+            'hasImages': True,
+            'isPublicDomain': True
+        }
+    
+    def get_aic_params(self) -> Dict[str, Any]:
+        """Get AIC query parameters"""
+        return {
+            'department_title': self.aic_departments,
+            'artwork_type_title': self.aic_artwork_types,
+            'is_public_domain': True,
+            'has_multimedia_resources': True
+        }
+    
+    def get_cma_params(self) -> Dict[str, Any]:
+        """Get CMA query parameters"""
+        return {
+            'department': self.cma_departments,
+            'type': self.cma_types,
+            'has_image': 1,
+            'cc0': None
+        }
 
 class MuseumConfig(BaseSettings):
     '''Configurations for specific museums'''
@@ -56,6 +116,12 @@ class Settings(BaseSettings):
     cma_api_base_url: str = Field(default="https://openaccess-api.clevelandart.org/api", env='CLEVELAND_API_BASE_URL')
     cma_user_agent: str = Field(default="Cleveland-ArtDownloadBot/1.0", env='CLEVELAND_USER_AGENT')
     cma_rate_limit: float = Field(default=80.0, env='CLEVELAND_RATE_LIMIT')
+
+    museum_queries: MuseumQuerySettings = Field(
+        default_factory=MuseumQuerySettings,
+        description="Museum-specific query parameters"
+    )
+
 
     def get_museum_info(self, museum_id: str) -> MuseumInfo:
         """Get MuseumInfo for a specific museum"""
