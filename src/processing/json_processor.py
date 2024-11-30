@@ -12,7 +12,6 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 from ..config import settings
-from ..utils import setup_logging
 
 class ArtworkJSONProcessor: 
     '''Processed artwork JSON files into structured data frame'''
@@ -112,8 +111,6 @@ class ArtworkJSONProcessor:
 
 def main():
     """Main function for running the processor directly."""
-    # Setup logging using existing utility
-    setup_logging()
     
     # Create processor instance
     processor = ArtworkJSONProcessor()

@@ -13,17 +13,6 @@ def get_project_root() -> Path:
     settings.initialize_paths(root)
     return root
 
-def setup_logging() -> None:
-    """Configure logging for the application."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.FileHandler(settings.LOGS_DIR / 'aic_downloader.log'),
-            logging.StreamHandler()
-        ]
-    )
-
 def ensure_directory(path: Path) -> None:
     """Create directory if it doesn't exist."""
     path.mkdir(parents=True, exist_ok=True)
