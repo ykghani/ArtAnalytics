@@ -1,12 +1,12 @@
-from typing import Dict, Any, Optional, Iterator
+from typing import Dict, Any, Optional, Iterator, Set
 from pathlib import Path
 from PIL import Image
 import logging
 from io import BytesIO
-from dataclasses import dataclass
+from dataclasses import dataclass, field 
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from ..config import settings
+from ..config import settings, log_level
 from .schemas import ArtworkMetadata, MuseumInfo, AICArtworkFactory
 from ..download.progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import sanitize_filename, setup_logging
@@ -19,7 +19,7 @@ class AICClient(MuseumAPIClient):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = AICArtworkFactory()
-        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'aic')
+        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')
     
     def _get_auth_header(self) -> str:
         if not self.api_key:
@@ -31,7 +31,7 @@ class AICClient(MuseumAPIClient):
         url = f"{self.museum_info.base_url}"  # base_url already includes /artworks
         params['page'] = page
         
-        logging.debug(f"Requesting url: {url} with params: {params}")
+        self.logger.debug(f"Requesting url: {url} with params: {params}")
         
         response = self.session.get(url, params=params, timeout=(5, 30))
         response.raise_for_status()
@@ -41,8 +41,7 @@ class AICClient(MuseumAPIClient):
         '''Implement artwork details fetching for AIC'''
         url = f"{self.museum_info.base_url}/{artwork_id}"
         
-        # Add debug logging
-        logging.debug(f"Fetching artwork details from: {url}")
+        self.logger.debug(f"Fetching artwork details from: {url}")
         
         try:
             response = self.session.get(url, timeout=(5, 30))
@@ -50,7 +49,7 @@ class AICClient(MuseumAPIClient):
             # return ArtworkMetadata.from_aic_response(response.json()['data'])
             return self.artwork_factory.create_metadata(response.json()['data'])
         except Exception as e:
-            logging.error(f"Error fetching details for artwork {artwork_id}: {e}")
+            self.logger.error(f"Error fetching details for artwork {artwork_id}: {e}")
             raise
     
     def get_departments(self) -> Dict[str, Any]:
@@ -74,46 +73,56 @@ class AICClient(MuseumAPIClient):
         return response.json()
         
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Implement paginated collection iteration for AIC with resumption'''
         try:
-            # Determine starting page from progress tracker
             start_page = 1
             if isinstance(self.progress_tracker, AICProgressTracker):
                 last_page = self.progress_tracker.get_last_page()
-                if last_page > 0:
+                if last_page is not None and last_page > 0:  # Changed this line
                     start_page = last_page
-                    logging.info(f"Resuming from page {start_page}")
+                    self.logger.info(f"Resuming from page {start_page}")
             
             current_page = start_page
             while True:
                 try:
-                    # Get page of artworks
                     response = self.get_artwork_page(current_page, params)
-                    if not response or not response.get('data'):
+                    
+                    if not response:
+                        self.logger.warning("Empty response received")  # Add this
+                        break
+                        
+                    data = response.get('data', [])
+                    if not data:
+                        self.logger.info("No more data available")  # Add this
                         break
                     
-                    for item in response['data']:
+                    self.logger.progress(f"Processing page {current_page}")  # Add this
+                    
+                    for item in data:
                         try:
-                            artwork = self._get_artwork_details_impl(str(item['id']))
+                            artwork_id = item.get('id')
+                            if not artwork_id:
+                                self.logger.warning("Artwork missing ID, skipping")  # Add this
+                                continue
+                                
+                            artwork = self._get_artwork_details_impl(str(artwork_id))
                             if artwork:
-                                # Add page info to artwork metadata
                                 artwork.page = current_page
-                                # Update progress tracker
                                 if isinstance(self.progress_tracker, AICProgressTracker):
                                     self.progress_tracker.update_page(current_page)
+                                self.logger.artwork(f"Successfully processed artwork {artwork_id}")  # Add this
                                 yield artwork
                         except Exception as e:
-                            logging.error(f"Error processing artwork {item['id']}: {e}")
+                            self.logger.error(f"Error processing artwork {item.get('id')}: {e}")
                             continue
                     
                     current_page += 1
                     
                 except Exception as e:
-                    logging.error(f"Error processing page {current_page}: {e}")
+                    self.logger.error(f"Error processing page {current_page}: {e}")
                     raise
                     
         except Exception as e:
-            logging.error(f"Error in collection iteration: {e}")
+            self.logger.error(f"Error in collection iteration: {e}")
             raise
             
     def get_collection_info(self) -> Dict[str, Any]:
@@ -135,11 +144,15 @@ class AICClient(MuseumAPIClient):
         
 class AICImageProcessor(MuseumImageProcessor):
     """Art Institute of Chicago image processor implementation"""
+    def __init__(self, output_dir: Path, museum_info: MuseumInfo):
+        super().__init__(output_dir, museum_info)
+        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')
     
     def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
         """Process and save an artwork image"""
         try:
             # Open image from bytes
+            self.logger.debug(f"Processing image for artwork {metadata.id}")
             image = Image.open(BytesIO(image_data))
             
             # Generate filename and full path
@@ -148,9 +161,11 @@ class AICImageProcessor(MuseumImageProcessor):
             
             # Save the image
             image.save(filepath, format='JPEG', quality=95)
+            self.logger.artwork(f"Saved image to {filepath}")
             return filepath
             
         except Exception as e:
+            self.logger.error(f"Failed to process image for artwork {metadata.id}: {str(e)}")
             raise RuntimeError(f"Failed to process image for artwork {metadata.id}: {str(e)}")
     
     def generate_filename(self, metadata: ArtworkMetadata) -> str:
@@ -167,11 +182,17 @@ class AICImageProcessor(MuseumImageProcessor):
 class AICProgressState(ProgressState):
     last_page: int = 0
     total_pages: int = 0
+    processed_ids: Set[str] = field(default_factory=set)  
+    success_ids: Set[str] = field(default_factory=set)    
+    failed_ids: Set[str] = field(default_factory=set)     
+    error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
 
 class AICProgressTracker(BaseProgressTracker):
     def __init__(self, progress_file: Path):
-        self.state = AICProgressState()
-        super().__init__(progress_file)
+        self.progress_file = progress_file  
+        self.state = AICProgressState()     
+        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')  
+        self._load_progress()
     
     def get_state_dict(self) -> Dict[str, Any]:
         return {

@@ -1,4 +1,5 @@
 from typing import Dict, List, Any, Optional, Iterator, Set
+import requests
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
@@ -91,14 +92,12 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
     def _get_artwork_ids(self, **params) -> List[int]:
         """Get list of artwork IDs matching search parameters"""
-        # Try cache first (previous cache code remains the same)
-
+        
         all_ids = []
         skip = 0
         limit = 1000
-        total = 0  # Initialize total
+        total = 0
         
-        # Add fields parameter to only return IDs
         params['fields'] = 'id'
         self.logger.debug(f"Fetching artwork IDs with params: {params}")
         
@@ -109,7 +108,6 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                 response.raise_for_status()
                 data = response.json()
                 
-                # Get total on first request
                 if skip == 0:
                     total = data.get('info', {}).get('total', 0)
                     self.logger.debug(f"Total available artworks: {total}")
@@ -126,21 +124,16 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                     break
                     
         except requests.RequestException as e:
-            # Only log response details for request-related errors
             self.logger.error(f'Error fetching artwork IDs: {e}')
             if hasattr(e, 'response') and e.response is not None:
-                self.logger.error(f"Response status: {e.response.status_code}")
-                self.logger.error(f"Response headers: {dict(e.response.headers)}")
-                self.logger.error(f"Response content: {e.response.text[:500]}...")
+                self.logger.error(f"Response: {e.response.status_code} - {e.response.text[:500]}...")
+            raise
+        
         except Exception as e:
-            # Generic error handling
             self.logger.error(f'Unexpected error fetching artwork IDs: {e}')
+            raise
         
         return all_ids
-
-        except Exception as e:
-            logging.error(f"Error fetching artwork IDs: {str(e)}")
-            raise
 
     def _get_unprocessed_ids(self, artwork_ids: List[int]) -> List[int]:
         """Filter out already processed IDs"""
