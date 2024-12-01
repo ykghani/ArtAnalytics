@@ -2,16 +2,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any
 
-@dataclass
-class MuseumInfo:
-    """Basic information about a museum API"""
-    name: str
-    base_url: str
-    code: str 
-    user_agent: Optional[str] = None
-    api_version: str = "v1"
-    rate_limit: float = 1.0
-    requires_api_key: bool = False
+from ..config import log_level, settings
+from .museum_info import MuseumInfo
+from ..utils import setup_logging
 
 @dataclass
 class Dimensions:
@@ -112,12 +105,17 @@ class ArtworkMetadata:
 
 class ArtworkMetadataFactory(ABC):
     """Abstract base factory for creating ArtworkMetadata objects"""
+    def __init__(self, museum_code: str):
+        self.logger = setup_logging(settings.logs_dir, log_level, museum_code)
+        
     @abstractmethod
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
         pass
 
 class AICArtworkFactory(ArtworkMetadataFactory):
     """Factory for creating Art Institute of Chicago artwork metadata"""
+    def __init__(self):
+        super().__init__('aic')
     
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
         # Extract dimensions data
@@ -187,75 +185,92 @@ class AICArtworkFactory(ArtworkMetadataFactory):
 
 class MetArtworkFactory(ArtworkMetadataFactory):
     """Factory for creating Metropolitan Museum artwork metadata"""
+    def __init__(self):
+        super().__init__('met')
     
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
-        # Extract measurements
-        measurements = data.get('measurements', [])
-        height = width = depth = diameter = None
-        for measure in measurements:
-            if 'Height' in measure.get('elementMeasurements', {}):
-                height = measure['elementMeasurements'].get('Height')
-            if 'Width' in measure.get('elementMeasurements', {}):
-                width = measure['elementMeasurements'].get('Width')
-            if 'Depth' in measure.get('elementMeasurements', {}):
-                depth = measure['elementMeasurements'].get('Depth')
-            if 'Diameter' in measure.get('elementMeasurements', {}):
-                diameter = measure['elementMeasurements'].get('Diameter')
+        
+        if not data:
+            self.logger.debug(f"Received empty data")
+            return None 
+        
+        try:
+            # Extract measurements
+            measurements = data.get('measurements', [])
+            height = width = depth = diameter = None
+            for measure in measurements:
+                if 'Height' in measure.get('elementMeasurements', {}):
+                    height = measure['elementMeasurements'].get('Height')
+                if 'Width' in measure.get('elementMeasurements', {}):
+                    width = measure['elementMeasurements'].get('Width')
+                if 'Depth' in measure.get('elementMeasurements', {}):
+                    depth = measure['elementMeasurements'].get('Depth')
+                if 'Diameter' in measure.get('elementMeasurements', {}):
+                    diameter = measure['elementMeasurements'].get('Diameter')
 
-        return ArtworkMetadata(
-            id=str(data['objectID']),
-            accession_number=data.get('accessionNumber', ''),
-            title=data.get('title', 'Untitled'),
-            artist=data.get('artistDisplayName', 'Unknown'),
-            artist_display=data.get('artistDisplayBio'),
-            artist_bio=None,  # Met provides this in artistDisplayBio
-            artist_nationality=data.get('artistNationality'),
-            artist_birth_year=int(data['artistBeginDate']) if data.get('artistBeginDate', '').isdigit() else None,
-            artist_death_year=int(data['artistEndDate']) if data.get('artistEndDate', '').isdigit() else None,
+            artwork = ArtworkMetadata(
+                id=str(data['objectID']),
+                accession_number=data.get('accessionNumber', ''),
+                title=data.get('title', 'Untitled'),
+                artist=data.get('artistDisplayName', 'Unknown'),
+                artist_display=data.get('artistDisplayBio'),
+                artist_bio=None,  # Met provides this in artistDisplayBio
+                artist_nationality=data.get('artistNationality'),
+                artist_birth_year=int(data['artistBeginDate']) if data.get('artistBeginDate', '').isdigit() else None,
+                artist_death_year=int(data['artistEndDate']) if data.get('artistEndDate', '').isdigit() else None,
+                
+                date_display=data.get('objectDate'),
+                date_start=str(data.get('objectBeginDate')) if data.get('objectBeginDate') else None,
+                date_end=str(data.get('objectEndDate')) if data.get('objectEndDate') else None,
+                
+                medium=data.get('medium'),
+                dimensions=data.get('dimensions'),
+                height_cm=height,
+                width_cm=width,
+                depth_cm=depth,
+                diameter_cm=diameter,
+                
+                department=data.get('department'),
+                artwork_type=data.get('objectName'),
+                culture=[data.get('culture')] if data.get('culture') else [],
+                style=None,  # Met doesn't provide this directly
+                
+                is_public_domain=data.get('isPublicDomain', False),
+                credit_line=data.get('creditLine'),
+                is_on_view=bool(data.get('GalleryNumber')),
+                is_highlight=data.get('isHighlight', False),
+                is_boosted=None,  # Met doesn't have this concept
+                boost_rank=None,  # Met doesn't have this concept
+                has_not_been_viewed_much=None,  # Met doesn't have this concept
+                
+                description=None,  # Met doesn't provide this
+                short_description=None,  # Met doesn't provide this
+                provenance=None,  # Met provides this but not in API
+                inscriptions=[data.get('inscriptions')] if data.get('inscriptions') else [],
+                fun_fact=None,  # Met doesn't have this
+                style_titles=[],  # Met doesn't provide this
+                keywords=[tag.get('term') for tag in data.get('tags', [])] if data.get('tags') else [],
+                
+                primary_image_url=data.get('primaryImage'),
+                image_urls={'primary': data.get('primaryImage'), 'small': data.get('primaryImageSmall')} if data.get('primaryImage') else {},
+                
+                colorfulness=None,  # Met doesn't provide this
+                color_h=None,  # Met doesn't provide this
+                color_s=None,  # Met doesn't provide this
+                color_l=None   # Met doesn't provide this
+            )
             
-            date_display=data.get('objectDate'),
-            date_start=str(data.get('objectBeginDate')) if data.get('objectBeginDate') else None,
-            date_end=str(data.get('objectEndDate')) if data.get('objectEndDate') else None,
+            self.logger.artwork(f"Created metadata for artwork {data.get('objectID')}")
+            return artwork
             
-            medium=data.get('medium'),
-            dimensions=data.get('dimensions'),
-            height_cm=height,
-            width_cm=width,
-            depth_cm=depth,
-            diameter_cm=diameter,
-            
-            department=data.get('department'),
-            artwork_type=data.get('objectName'),
-            culture=[data.get('culture')] if data.get('culture') else [],
-            style=None,  # Met doesn't provide this directly
-            
-            is_public_domain=data.get('isPublicDomain', False),
-            credit_line=data.get('creditLine'),
-            is_on_view=bool(data.get('GalleryNumber')),
-            is_highlight=data.get('isHighlight', False),
-            is_boosted=None,  # Met doesn't have this concept
-            boost_rank=None,  # Met doesn't have this concept
-            has_not_been_viewed_much=None,  # Met doesn't have this concept
-            
-            description=None,  # Met doesn't provide this
-            short_description=None,  # Met doesn't provide this
-            provenance=None,  # Met provides this but not in API
-            inscriptions=[data.get('inscriptions')] if data.get('inscriptions') else [],
-            fun_fact=None,  # Met doesn't have this
-            style_titles=[],  # Met doesn't provide this
-            keywords=[tag.get('term') for tag in data.get('tags', [])] if data.get('tags') else [],
-            
-            primary_image_url=data.get('primaryImage'),
-            image_urls={'primary': data.get('primaryImage'), 'small': data.get('primaryImageSmall')} if data.get('primaryImage') else {},
-            
-            colorfulness=None,  # Met doesn't provide this
-            color_h=None,  # Met doesn't provide this
-            color_s=None,  # Met doesn't provide this
-            color_l=None   # Met doesn't provide this
-        )
+        except Exception as e:
+            self.logger.error(f"Error creating metadata: {e}")
+            return None
 
 class CMAArtworkFactory(ArtworkMetadataFactory):
     """Factory for creating Cleveland Museum of Art artwork metadata"""
+    def __init__(self):
+        super().__init__('cma')
     
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
         # Handle dimensions

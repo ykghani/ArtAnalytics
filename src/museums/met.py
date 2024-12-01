@@ -215,7 +215,17 @@ class MetClient(MuseumAPIClient):
             self.logger.debug(f"Fetching details from: {url}")
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
-            artwork = self.artwork_factory.create_metadata(response.json())
+            data = response.json()
+            
+            if not data: 
+                self.logger.warning(f"No data returned for artwork: {object_id}")
+                return None
+            
+            artwork = self.artwork_factory.create_metadata(data)
+            if artwork is None:
+                self.logger.warning(f'Could not create metadata for artwork: {object_id}')
+                return None
+            
             self.logger.artwork(f"Successfully fetched artwork {object_id}")
             return artwork
         

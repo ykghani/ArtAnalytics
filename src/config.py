@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 from typing import Optional, Dict, Any
 from enum import Enum
 
-from .museums.schemas import MuseumInfo
+from .museums.museum_info import MuseumInfo
 from .utils import LogLevel
 
 
