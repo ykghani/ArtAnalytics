@@ -9,8 +9,9 @@ import time
 import json
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from ..config import settings, log_level
+from ..config import settings
 from ..download.progress_tracker import BaseProgressTracker
+from ..log_level import log_level
 from .schemas import ArtworkMetadata, MuseumInfo, CMAArtworkFactory
 from ..utils import sanitize_filename, setup_logging
 

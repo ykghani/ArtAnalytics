@@ -1,10 +1,18 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, TYPE_CHECKING
 
-from ..config import log_level, settings
+from ..config import settings
+from ..log_level import log_level
 from .museum_info import MuseumInfo
 from ..utils import setup_logging
+
+if TYPE_CHECKING: 
+    from ..config import Settings
+
+def get_settings():
+    from ..config import settings
+    return settings
 
 @dataclass
 class Dimensions:
@@ -106,6 +114,7 @@ class ArtworkMetadata:
 class ArtworkMetadataFactory(ABC):
     """Abstract base factory for creating ArtworkMetadata objects"""
     def __init__(self, museum_code: str):
+        settings = get_settings()
         self.logger = setup_logging(settings.logs_dir, log_level, museum_code)
         
     @abstractmethod

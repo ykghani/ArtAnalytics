@@ -6,7 +6,8 @@ from io import BytesIO
 from dataclasses import dataclass, field 
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from ..config import settings, log_level
+from ..config import settings
+from ..log_level import log_level
 from .schemas import ArtworkMetadata, MuseumInfo, AICArtworkFactory
 from ..download.progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import sanitize_filename, setup_logging

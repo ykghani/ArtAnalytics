@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 from .museums.museum_info import MuseumInfo
-from .utils import LogLevel
+from .log_level import LogLevel
 
 
 class MuseumQuerySettings(BaseSettings):
@@ -259,4 +259,3 @@ class Settings(BaseSettings):
 
 # Create global settings instance
 settings = Settings()
-log_level = LogLevel("debug")

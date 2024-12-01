@@ -7,14 +7,9 @@ import json
 import re
 
 # from .config import settings
+from .log_level import LogLevel
+# from .config import settings
 
-class LogLevel(str, Enum):
-    """Log level settings for application"""
-    NONE = "none"           # No logging
-    ERRORS_ONLY = "errors"  # Only log errors
-    PROGRESS = "progress"   # Only progress updates
-    ARTWORK = "artwork"     # Artwork + progress updates
-    DEBUG = "debug"         # All logging including debug
 
 ARTWORK = 15  # Between DEBUG (10) and INFO (20)
 PROGRESS = 25  # Between INFO (20) and WARNING (30)

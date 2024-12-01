@@ -14,8 +14,9 @@ from urllib3.util.retry import Retry
 from requests.sessions import Session as Session
 
 from .base import MuseumAPIClient, MuseumImageProcessor
-from ..config import settings, log_level
+from ..config import settings
 from ..download.progress_tracker import ProgressState, BaseProgressTracker
+from ..log_level import log_level
 from .schemas import ArtworkMetadata, MuseumInfo, MetArtworkFactory
 from ..utils import sanitize_filename, setup_logging
 

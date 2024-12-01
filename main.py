@@ -4,8 +4,9 @@ from pathlib import Path
 from typing import Dict, Any, List 
 import concurrent.futures
 
-from src.config import settings, LogLevel
+from src.config import settings
 from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
+from src.log_level import log_level
 from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
@@ -184,7 +185,7 @@ def main():
     settings.initialize_paths(project_root)
     
     # Setup logging with configured level
-    setup_logging(settings.logs_dir, settings.log_level)
+    setup_logging(settings.logs_dir, log_level, None)
     
     if len(sys.argv) > 1:
         museum_ids = sys.argv[1: ]

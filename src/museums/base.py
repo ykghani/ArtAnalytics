@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Iterator
+from typing import Dict, Any, Optional, List, Iterator, TYPE_CHECKING
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
