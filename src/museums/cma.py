@@ -8,41 +8,10 @@ import time
 import json
 
 from .base import MuseumAPIClient, MuseumImageProcessor
+from ..config import settings, log_level
 from ..download.progress_tracker import BaseProgressTracker
 from .schemas import ArtworkMetadata, MuseumInfo, CMAArtworkFactory
-from ..utils import sanitize_filename
-
-@dataclass
-class CMAProgressState:
-    """Separate state class for CMA progress tracking"""
-    def __init__(self):
-        self.processed_ids: Set[str] = set()
-        self.success_ids: Set[str] = set()
-        self.failed_ids: Set[str] = set()
-        self.error_log: Dict[str, Dict[str, str]] = {}
-        self.total_objects: int = 0
-
-class CMAProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.progress_file = progress_file
-        self.state = CMAProgressState()
-        self._load_progress()
-    
-    def get_state_dict(self) -> Dict[str, Any]:
-        return {
-            'processed_ids': list(self.state.processed_ids),
-            'success_ids': list(self.state.success_ids),
-            'failed_ids': list(self.state.failed_ids),
-            'error_log': self.state.error_log,
-            'total_objects': self.state.total_objects
-        }
-    
-    def restore_state(self, data: Dict[str, Any]) -> None:
-        self.state.processed_ids = set(data.get('processed_ids', []))
-        self.state.success_ids = set(data.get('success_ids', []))
-        self.state.failed_ids = set(data.get('failed_ids', []))
-        self.state.error_log = data.get('error_log', {})
-        self.state.total_objects = data.get('total_objects', 0)
+from ..utils import sanitize_filename, setup_logging
 
 class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
     '''Cleveland Museum of Art API Client Implementation'''
@@ -54,6 +23,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         self.progress_tracker = progress_tracker
         self.artwork_factory = CMAArtworkFactory()
         self.object_ids_cache_file = Path(cache_file).parent / 'cma_object_ids_cache.json' if cache_file else None
+        self.logger = setup_logging(settings.logs_dir, log_level, 'cma')
     
     def _get_auth_header(self) -> str:
         '''Cleveland does not require authentication'''
@@ -61,10 +31,13 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
     def get_total_objects(self) -> int:
         '''Get total number of objects in collection'''
+        self.logger.debug("Fetching total object count")
         url = f"{self.museum_info.base_url}/artworks/"
         response = self.session.get(url)
         response.raise_for_status()
-        return response.json().get('info', {}).get('total', 0)
+        total = response.json().get('info', {}).get('total', 0)
+        self.logger.progress(f"Total objects in collection: {total}")
+        return total
     
     def get_collection_info(self) -> Dict[str, Any]:
         '''Get basic collection information'''
@@ -77,10 +50,10 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         try:
             # First get all artwork IDs
             artwork_ids = self._get_artwork_ids(**params)
-            logging.info(f"Retrieved {len(artwork_ids)} total artwork IDs")
+            self.logger.progress(f"Retrieved {len(artwork_ids)} total artwork IDs")
             
             if not artwork_ids:
-                logging.warning("No artworks found matching criteria")
+                self.logger.progress("No artworks found matching criteria")
                 return
             
             # Filter out already processed IDs
@@ -88,17 +61,17 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
             total_remaining = len(unprocessed_ids)
             
             if total_remaining == 0:
-                logging.info("All items have been processed.")
+                self.logger.progress("All items have been processed.")
                 return
                 
-            logging.info(f"Found {total_remaining} unprocessed artworks out of {len(artwork_ids)} total")
+            self.logger.progress(f"Found {total_remaining} unprocessed artworks out of {len(artwork_ids)} total")
             
-            # Process artworks one by one
+            
             progress_interval = max(1, total_remaining // 100)
             for idx, artwork_id in enumerate(unprocessed_ids):
                 if idx % progress_interval == 0:
                     progress = (idx / total_remaining) * 100
-                    logging.info(f"Progress: {progress:.1f}% ({idx}/{total_remaining})")
+                    self.logger.progress(f"Progress: {progress:.1f}% ({idx}/{total_remaining})")
                     
                 try:
                     artwork = self._get_artwork_details_impl(str(artwork_id))
@@ -106,13 +79,14 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                         if isinstance(self.progress_tracker, CMAProgressTracker):
                             self.progress_tracker.state.total_objects = len(artwork_ids)
                             self.progress_tracker.state.last_object_id = str(artwork_id)
+                        self.logger.artwork(f"Successfully processed artwork {artwork_id}")
                         yield artwork
                 except Exception as e:
-                    logging.error(f"Error processing artwork {artwork_id}: {e}")
+                    self.logger.error(f"Error processing artwork {artwork_id}: {e}")
                     continue
                     
         except Exception as e:
-            logging.error(f"Error in collection iteration: {e}")
+            self.logger.error(f"Error in collection iteration: {e}")
             raise
 
     def _get_artwork_ids(self, **params) -> List[int]:
@@ -122,77 +96,47 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         all_ids = []
         skip = 0
         limit = 1000
-
-        search_params = {
-            **params,
-            'fields': 'id',
-            'skip': skip,
-            'limit': limit
-        }
-
+        total = 0  # Initialize total
+        
+        # Add fields parameter to only return IDs
+        params['fields'] = 'id'
+        self.logger.debug(f"Fetching artwork IDs with params: {params}")
+        
         try:
-            # First request to get total
-            response = self.session.get(
-                f"{self.museum_info.base_url}/artworks/", 
-                params=search_params,
-                timeout=(5, 30)  # Add timeout
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            total_available = data.get('info', {}).get('total', 0)
-            logging.info(f"Total artworks available: {total_available}")
-
-            # Get first batch of IDs
-            artworks = data.get('data', [])
-            all_ids.extend(art['id'] for art in artworks)
-            
-            # Continue fetching if there are more
-            while len(all_ids) < total_available:
-                skip += limit
-                search_params['skip'] = skip
+            while True:
+                page_params = {**params, 'skip': skip, 'limit': limit}
+                response = self.session.get(f"{self.museum_info.base_url}/artworks/", params=page_params)
+                response.raise_for_status()
+                data = response.json()
                 
-                try:
-                    logging.debug(f"Requesting artworks with skip={skip}")
-                    response = self.session.get(
-                        f"{self.museum_info.base_url}/artworks/", 
-                        params=search_params,
-                        timeout=(5, 30)
-                    )
+                # Get total on first request
+                if skip == 0:
+                    total = data.get('info', {}).get('total', 0)
+                    self.logger.debug(f"Total available artworks: {total}")
+                
+                artworks = data.get('data', [])
+                if not artworks:
+                    break
                     
-                    # Log response details if there's an issue
-                    if response.status_code != 200:
-                        logging.error(f"Response status: {response.status_code}")
-                        logging.error(f"Response headers: {dict(response.headers)}")
-                        logging.error(f"Response content: {response.text[:500]}...")  # First 500 chars
+                all_ids.extend(art['id'] for art in artworks)
+                self.logger.progress(f"Retrieved {len(all_ids)}/{total} artwork IDs")
+                
+                skip += limit
+                if skip >= total:
+                    break
                     
-                    response.raise_for_status()
-                    data = response.json()
-                    
-                    artworks = data.get('data', [])
-                    if not artworks:
-                        logging.warning(f"No artworks returned at skip={skip}")
-                        break
-                    
-                    new_ids = [art['id'] for art in artworks]
-                    logging.debug(f"Retrieved {len(new_ids)} new IDs")
-                    all_ids.extend(new_ids)
-                    logging.info(f"Retrieved {len(all_ids)}/{total_available} artwork IDs")
-
-                except requests.Timeout:
-                    logging.error(f"Timeout occurred at skip={skip}")
-                    raise
-                except requests.ConnectionError:
-                    logging.error(f"Connection error at skip={skip}")
-                    raise
-                except Exception as e:
-                    logging.error(f"Error at skip={skip}: {str(e)}")
-                    raise
-
-            # Save to cache before returning
-            self._save_object_ids_cache(all_ids)
-            logging.info(f"Fetched and cached {len(all_ids)} artwork IDs")
-            return all_ids
+        except requests.RequestException as e:
+            # Only log response details for request-related errors
+            self.logger.error(f'Error fetching artwork IDs: {e}')
+            if hasattr(e, 'response') and e.response is not None:
+                self.logger.error(f"Response status: {e.response.status_code}")
+                self.logger.error(f"Response headers: {dict(e.response.headers)}")
+                self.logger.error(f"Response content: {e.response.text[:500]}...")
+        except Exception as e:
+            # Generic error handling
+            self.logger.error(f'Unexpected error fetching artwork IDs: {e}')
+        
+        return all_ids
 
         except Exception as e:
             logging.error(f"Error fetching artwork IDs: {str(e)}")
@@ -254,30 +198,36 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         url = f"{self.museum_info.base_url}/artworks/{artwork_id}"
         
         try:
+            self.logger.debug(f"Fetching details from: {url}")
             response = self.session.get(url, timeout=(5, 30))
             response.raise_for_status()
             artwork = response.json().get('data', {})
-            # return self._convert_to_metadata(artwork)
             return self.artwork_factory.create_metadata(artwork)
             
         except Exception as e:
-            logging.error(f"Error fetching details for artwork {artwork_id}: {e}")
+            self.logger.error(f"Error fetching details for artwork {artwork_id}: {e}")
             raise
 
-class CMAImageProcessor(MuseumImageProcessor):  # Renamed from ClevelandImageProcessor
+class CMAImageProcessor(MuseumImageProcessor):  
     '''Cleveland Museum of Art image processor implementation'''
+    def __init__(self, output_dir: Path, museum_info: MuseumInfo):
+        super().__init__(output_dir, museum_info)
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'cma')
     
     def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
         '''Process and save artwork image'''
         try:
+            self.logger.debug(f"Processing image for artwork {metadata.id}")
             image = Image.open(BytesIO(image_data))
             
             filename = self.generate_filename(metadata)
             filepath = self.output_dir / filename
             
             image.save(filepath, format='JPEG', quality=95)
+            self.logger.artwork(f"Saved image to {filepath}")
             return filepath
         except Exception as e:
+            self.logger.error(f"Failed to process object {metadata.id}: {str(e)}")
             raise RuntimeError(f"Failed to process object {metadata.id}: {str(e)}")
     
     def generate_filename(self, metadata: ArtworkMetadata) -> str:
@@ -288,3 +238,37 @@ class CMAImageProcessor(MuseumImageProcessor):  # Renamed from ClevelandImagePro
             artist=metadata.artist,
             max_length=255
         )
+
+@dataclass
+class CMAProgressState:
+    """Separate state class for CMA progress tracking"""
+    def __init__(self):
+        self.processed_ids: Set[str] = set()
+        self.success_ids: Set[str] = set()
+        self.failed_ids: Set[str] = set()
+        self.error_log: Dict[str, Dict[str, str]] = {}
+        self.total_objects: int = 0
+
+class CMAProgressTracker(BaseProgressTracker):
+    def __init__(self, progress_file: Path):
+        self.progress_file = progress_file
+        self.state = CMAProgressState()
+        self.logger = setup_logging(settings.logs_dir, log_level, 'cma')
+        self._load_progress()
+    
+    def get_state_dict(self) -> Dict[str, Any]:
+        return {
+            'processed_ids': list(self.state.processed_ids),
+            'success_ids': list(self.state.success_ids),
+            'failed_ids': list(self.state.failed_ids),
+            'error_log': self.state.error_log,
+            'total_objects': self.state.total_objects
+        }
+    
+    def restore_state(self, data: Dict[str, Any]) -> None:
+        self.state.processed_ids = set(data.get('processed_ids', []))
+        self.state.success_ids = set(data.get('success_ids', []))
+        self.state.failed_ids = set(data.get('failed_ids', []))
+        self.state.error_log = data.get('error_log', {})
+        self.state.total_objects = data.get('total_objects', 0)
+        self.logger.debug(f"Restored state with {len(self.state.processed_ids)} processed items")

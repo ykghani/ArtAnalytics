@@ -10,6 +10,7 @@ from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
+from src.utils import setup_logging
 
 def download_museum_collection_wrapper(args: tuple) -> None:
     '''Wrapper function to unpack arguments for concurrent execution'''
@@ -45,35 +46,35 @@ def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None:
             except Exception as e: 
                 logging.error(f"Download failed for {museum_id}: {e}")
 
-def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
-    '''Configure logging for application based on specific log level'''
-    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+# def setup_logging(log_dir: Path, log_level: LogLevel) -> None: 
+#     '''Configure logging for application based on specific log level'''
+#     log_format = '%(asctime)s - %(levelname)s - %(message)s'
     
-    handlers = []
-    if log_level != LogLevel.NONE:
-        handlers = [
-            logging.FileHandler(log_dir / 'artwork_downloader.log'),
-            logging.StreamHandler()
-        ]
+#     handlers = []
+#     if log_level != LogLevel.NONE:
+#         handlers = [
+#             logging.FileHandler(log_dir / 'artwork_downloader.log'),
+#             logging.StreamHandler()
+#         ]
     
-    for handler in handlers:
-        handler.setFormatter(logging.Formatter(log_format))
+#     for handler in handlers:
+#         handler.setFormatter(logging.Formatter(log_format))
     
-    root_logger = logging.getLogger()
-    root_logger.handlers = [] #clear existing handlers
+#     root_logger = logging.getLogger()
+#     root_logger.handlers = [] #clear existing handlers
     
-    if log_level == LogLevel.NONE:
-        root_logger.setLevel(logging.CRITICAL + 1)
-    elif log_level == LogLevel.ERRORS_ONLY:
-        root_logger.setLevel(logging.ERROR)
-    else:
-        root_logger.setLevel(logging.INFO)
+#     if log_level == LogLevel.NONE:
+#         root_logger.setLevel(logging.CRITICAL + 1)
+#     elif log_level == LogLevel.ERRORS_ONLY:
+#         root_logger.setLevel(logging.ERROR)
+#     else:
+#         root_logger.setLevel(logging.INFO)
     
-    for handler in handlers:
-        root_logger.addHandler(handler)
+#     for handler in handlers:
+#         root_logger.addHandler(handler)
         
-    if log_level != LogLevel.NONE:
-        logging.info(f"Logging configured with level: {log_level}")
+#     if log_level != LogLevel.NONE:
+#         logging.info(f"Logging configured with level: {log_level}")
 
 def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo: 
     """Create MuseumInfo instance based on museum configuration"""

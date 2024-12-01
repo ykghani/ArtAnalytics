@@ -6,9 +6,10 @@ from io import BytesIO
 from dataclasses import dataclass
 
 from .base import MuseumAPIClient, MuseumImageProcessor
+from ..config import settings
 from .schemas import ArtworkMetadata, MuseumInfo, AICArtworkFactory
 from ..download.progress_tracker import BaseProgressTracker, ProgressState
-from ..utils import sanitize_filename
+from ..utils import sanitize_filename, setup_logging
 
 class AICClient(MuseumAPIClient):
     """Art Institute of Chicago API Client implementation"""
@@ -18,6 +19,7 @@ class AICClient(MuseumAPIClient):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = AICArtworkFactory()
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'aic')
     
     def _get_auth_header(self) -> str:
         if not self.api_key:

@@ -1,10 +1,95 @@
 import os
 from pathlib import Path
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+from enum import Enum
 import json
 import re
-from .config import settings
+
+# from .config import settings
+
+class LogLevel(str, Enum):
+    """Log level settings for application"""
+    NONE = "none"           # No logging
+    ERRORS_ONLY = "errors"  # Only log errors
+    PROGRESS = "progress"   # Only progress updates
+    ARTWORK = "artwork"     # Artwork + progress updates
+    DEBUG = "debug"         # All logging including debug
+
+ARTWORK = 15  # Between DEBUG (10) and INFO (20)
+PROGRESS = 25  # Between INFO (20) and WARNING (30)
+
+logging.addLevelName(ARTWORK, 'ARTWORK')
+logging.addLevelName(PROGRESS, 'PROGRESS')
+
+# Add convenience methods
+def artwork(self, message, *args, **kwargs):
+    self.log(ARTWORK, message, *args, **kwargs)
+
+def progress(self, message, *args, **kwargs):
+    self.log(PROGRESS, message, *args, **kwargs)
+
+
+logging.Logger.artwork = artwork
+logging.Logger.progress = progress
+
+def setup_logging(log_dir: Path, log_level: LogLevel, museum_code: Optional[str] = None) -> logging.Logger:
+    """Configure logging with both program-level and museum-specific logs.
+    
+    Args:
+        log_dir: Directory where log files will be stored
+        log_level: LogLevel enum specifying logging verbosity
+        museum_code: Optional museum code for museum-specific logging
+        
+    Returns:
+        Logger instance configured for the specified context
+    """
+    from .config import settings
+    # Create logs directory if it doesn't exist
+    log_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get the appropriate logger
+    if museum_code:
+        logger = logging.getLogger(f"museum.{museum_code}")
+        log_file = log_dir / f"{museum_code}_downloader.log"
+    else:
+        logger = logging.getLogger("artwork_downloader")  # Root program logger
+        log_file = log_dir / "artwork_downloader.log"
+    
+    # Clear any existing handlers
+    logger.handlers = []
+    
+    # Set propagation based on type
+    logger.propagate = museum_code is not None  # Museum loggers propagate to root
+    
+    # Map log levels
+    level_map = {
+        LogLevel.NONE: logging.CRITICAL + 1,
+        LogLevel.ERRORS_ONLY: logging.ERROR,
+        LogLevel.PROGRESS: PROGRESS,
+        LogLevel.ARTWORK: ARTWORK,
+        LogLevel.DEBUG: logging.DEBUG
+    }
+    
+    if log_level != LogLevel.NONE:
+        # File handler specific to this logger
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        )
+        logger.addHandler(file_handler)
+        
+        # Add console handler for non-museum loggers
+        if not museum_code:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(
+                logging.Formatter('%(levelname)s - %(message)s')
+            )
+            logger.addHandler(console_handler)
+    
+    logger.setLevel(level_map.get(log_level, logging.INFO))
+    return logger
+
 
 def get_project_root() -> Path:
     """Get the absolute path to the project root directory."""
