@@ -7,7 +7,8 @@ from .museums import (
     AICClient,
     AICImageProcessor
 )
-from .config import settings, LogLevel
+from .config import settings
+from .log_level import LogLevel 
 
 __all__ = [
     'ArtworkDownloader',

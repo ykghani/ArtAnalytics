@@ -6,10 +6,7 @@ from enum import Enum
 import json
 import re
 
-# from .config import settings
 from .log_level import LogLevel
-# from .config import settings
-
 
 ARTWORK = 15  # Between DEBUG (10) and INFO (20)
 PROGRESS = 25  # Between INFO (20) and WARNING (30)

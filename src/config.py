@@ -5,7 +5,7 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 from .museums.museum_info import MuseumInfo
-from .log_level import LogLevel
+from .log_level import log_level
 
 
 class MuseumQuerySettings(BaseSettings):
