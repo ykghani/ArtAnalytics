@@ -76,8 +76,16 @@ class ArtworkDownloader:
             "500", "502", "503", "504"
         )
         
-        error_str = str(error).lower()
+        error_str = str(error).lower() 
         return any(err in error_str for err in retriable_errors)
+    
+    def _get_image_data(self, artwork_metadata: ArtworkMetadata) -> Optional[bytes]:
+        """Get image data from artwork metadata"""
+        if artwork_metadata.primary_image_url:
+            response = self.client.session.get(artwork_metadata.primary_image_url)
+            response.raise_for_status()
+            return response.content
+        return None
 
     def download_artwork(self, artwork_metadata: ArtworkMetadata) -> None:
         """Download and process a single artwork."""

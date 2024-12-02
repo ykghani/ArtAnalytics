@@ -205,7 +205,7 @@ class MetArtworkFactory(ArtworkMetadataFactory):
         
         try:
             # Extract measurements
-            measurements = data.get('measurements', [])
+            measurements = data.get('measurements', []) or []
             height = width = depth = diameter = None
             for measure in measurements:
                 if 'Height' in measure.get('elementMeasurements', {}):
@@ -258,7 +258,7 @@ class MetArtworkFactory(ArtworkMetadataFactory):
                 inscriptions=[data.get('inscriptions')] if data.get('inscriptions') else [],
                 fun_fact=None,  # Met doesn't have this
                 style_titles=[],  # Met doesn't provide this
-                keywords=[tag.get('term') for tag in data.get('tags', [])] if data.get('tags') else [],
+                keywords=[tag.get('term') for tag in data.get('tags', []) or []],
                 
                 primary_image_url=data.get('primaryImage'),
                 image_urls={'primary': data.get('primaryImage'), 'small': data.get('primaryImageSmall')} if data.get('primaryImage') else {},
