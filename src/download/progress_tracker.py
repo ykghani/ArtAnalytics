@@ -6,6 +6,9 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..log_level import LogLevel, log_level
+from ..utils import setup_logging
+
 @dataclass
 class ProgressState:
     '''Base class for tracking museum download progress'''
@@ -25,6 +28,7 @@ class BaseProgressTracker(ABC):
         # Ensure we have a Path object
         self.progress_file = Path(progress_file) if not isinstance(progress_file, Path) else progress_file
         self.state = ProgressState()
+        self.logger = setup_logging(self.progress_file.parent, LogLevel.PROGRESS, 'progress')
         self._load_progress()
 
     
@@ -45,27 +49,26 @@ class BaseProgressTracker(ABC):
                 with self.progress_file.open('r') as f:
                     data = json.load(f)
                 self.restore_state(data)
-                logging.info(f"Loaded progress file. {len(self.state.processed_ids)} items processed.")
+                self.logger.progress(f"Loaded progress file. {len(self.state.processed_ids)} items processed.")
             else:
-                logging.info(f"No progress file found. Starting fresh")
+                self.logger.progress(f"No progress file found. Starting fresh")
                 self._save_progress()
         except Exception as e:
-            logging.error(f"Error loading progress file: {str(e)}. Starting fresh")
+            self.logger.error(f"Error loading progress file: {str(e)}. Starting fresh")
             self._save_progress()
     
     def _save_progress(self) -> None:
         '''Save progress to file'''
         try:
-            self.progress_file.parent.mkdir(parents= True, exist_ok= True)
+            self.progress_file.parent.mkdir(parents=True, exist_ok=True)
             
             temp_file = self.progress_file.with_suffix('.tmp')
             with temp_file.open('w') as f:
-                json.dump(self.get_state_dict(), f, indent= 4)
+                json.dump(self.get_state_dict(), f, indent=4)
             
             temp_file.replace(self.progress_file)
-        
-        except Exception as e: 
-            logging.error(f"Error saving progress: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"Error saving progress: {str(e)}")
     
     def log_status(self, artwork_id: str, status: str, error_message: str = None) -> None:
         '''Log artwork processing status'''

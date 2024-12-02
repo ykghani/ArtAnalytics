@@ -1,9 +1,10 @@
 from PIL import Image
 from io import BytesIO
 from pathlib import Path
-import logging
 from typing import Protocol, runtime_checkable
 
+from ..utils import setup_logging
+from ..config import settings
 from ..museums.schemas import ArtworkMetadata
 
 @runtime_checkable
@@ -26,6 +27,7 @@ class ImageProcessor:
         """
         self.output_dir = output_dir
         self.filename_generator = filename_generator
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'image_processor')
         self._ensure_output_dir()
     
     def _ensure_output_dir(self) -> None:
@@ -56,10 +58,10 @@ class ImageProcessor:
             image = Image.open(BytesIO(image_data))
             image.save(filepath, format='JPEG', quality=95)
             
-            logging.debug(f"Successfully saved image: {filepath.name}")
+            self.logger.debug(f"Successfully saved image: {filepath.name}")
             return filepath
             
         except (IOError, ValueError) as e:
             error_msg = f"Error saving image for artwork {metadata.id}: {str(e)}"
-            logging.error(error_msg)
+            self.logger.error(error_msg)
             raise IOError(error_msg) from e
