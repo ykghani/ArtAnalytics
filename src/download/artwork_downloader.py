@@ -136,6 +136,11 @@ class ArtworkDownloader:
             error_msg = f'Failed to process {artwork_info}: {str(e)}'
             self.logger.error(error_msg)
             self._handle_error(artwork_metadata.id, str(e))
+    
+    def _update_download_stats(self, size_bytes: int) -> None:
+        """Update download statistics."""
+        self._download_count += 1
+        self._total_size_bytes += size_bytes
 
     def download_collection(self, params: Dict[str, Any]) -> None:
         """Download all artwork matching the given parameters."""    

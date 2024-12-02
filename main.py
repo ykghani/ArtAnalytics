@@ -19,7 +19,8 @@ def download_museum_collection_wrapper(args: tuple) -> None:
     try:
         download_museum_collection(museum_id= museum_id)
     except Exception as e:
-        logging.error(f"Error downloading from {museum_id}: {e}")
+        logger = setup_logging(settings.logs_dir, log_level, museum_id)
+        logger.error(f"Error downloading from {museum_id}: {e}")
         raise
 
 def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None: 
@@ -43,9 +44,11 @@ def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None:
             museum_id = future_to_museum[future]
             try:
                 future.result()
-                logging.info(f"Successfully completed download for {museum_id}")
+                logger = setup_logging(settings.logs_dir, log_level, museum_id)
+                logger.info(f"Successfully completed download for {museum_id}")
             except Exception as e: 
-                logging.error(f"Download failed for {museum_id}: {e}")
+                logger = setup_logging(settings.logs_dir, log_level, museum_id)
+                logger.error(f"Download failed for {museum_id}: {e}")
 
 
 def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo: 
@@ -146,8 +149,9 @@ def download_museum_collection(museum_id: str) -> None:
         settings= settings
     )
     
-    logging.info(f"Starting download for {museum_id} museum")
-    logging.info(f"Museum params: {museum_config['params']}")
+    logger = setup_logging(settings.logs_dir, log_level, museum_id)
+    logger.info(f"Starting download for {museum_id} museum")
+    logger.info(f"Museum params: {museum_config['params']}")
     downloader.download_collection(museum_config['params'])
 
 def main():
@@ -156,7 +160,7 @@ def main():
     settings.initialize_paths(project_root)
     
     # Setup logging with configured level
-    setup_logging(settings.logs_dir, log_level, None)
+    logger = setup_logging(settings.logs_dir, log_level, None)
     
     if len(sys.argv) > 1:
         museum_ids = sys.argv[1: ]
@@ -173,10 +177,10 @@ def main():
     try:
         run_parallel_downloads(museum_ids)
     except KeyboardInterrupt:
-        logging.info(f"Download process interrupted by user")
+        logger.progress(f"Download process interrupted by user")
         sys.exit(0)
     except Exception as e: 
-        logging.error(f'Error in download process: {e}')
+        logger.error(f'Error in download process: {e}')
         sys.exit(1)
 
 if __name__ == "__main__":

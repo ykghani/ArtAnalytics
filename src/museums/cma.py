@@ -93,6 +93,10 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
     def _get_artwork_ids(self, **params) -> List[int]:
         """Get list of artwork IDs matching search parameters"""
+        all_ids = self._load_cached_object_ids()
+        if all_ids is not None:
+            self.logger.progress(f'List of artwork ids loaded from cache')
+            return all_ids
         
         all_ids = []
         skip = 0
@@ -112,6 +116,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                 if skip == 0:
                     total = data.get('info', {}).get('total', 0)
                     self.logger.debug(f"Total available artworks: {total}")
+                    self._save_object_ids_cache(list(range(total)))
                 
                 artworks = data.get('data', [])
                 if not artworks:
@@ -141,51 +146,50 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
         if not self.progress_tracker:
             return artwork_ids
             
-        str_ids = set(str(id) for id in artwork_ids)
         processed_ids = self.progress_tracker.state.processed_ids
-        unprocessed_ids = str_ids - processed_ids
+        unprocessed_ids = set(artwork_ids) - processed_ids
         
-        return sorted(int(id) for id in unprocessed_ids)
+        return sorted(unprocessed_ids)
 
     def _load_cached_object_ids(self) -> Optional[List[int]]:
         """Load artwork IDs from cache file if it exists and is recent"""
         if not self.object_ids_cache_file or not self.object_ids_cache_file.exists():
+            self.logger.debug("No cache file found or specified")
             return None
-            
+
         try:
             cache_stat = self.object_ids_cache_file.stat()
             cache_age = time.time() - cache_stat.st_mtime
-            
+
             # Cache expires after 24 hours
             if cache_age > 60 * 60 * 24:
+                self.logger.debug("Cache file expired (older than 24 hours)")
                 return None
-                
+
             with self.object_ids_cache_file.open('r') as f:
                 cached_ids = json.load(f)
-                # Validate cache - don't use if empty
-                if not cached_ids:
-                    logging.warning("Cached ID list is empty, fetching fresh data")
-                    return None
+                self.logger.debug(f"Successfully loaded {len(cached_ids)} IDs from cache")
                 return cached_ids
         except Exception as e:
-            logging.warning(f"Failed to load artwork IDs cache: {e}")
+            self.logger.error(f"Failed to load artwork IDs cache: {e}")
             # Delete invalid cache file
             try:
                 self.object_ids_cache_file.unlink(missing_ok=True)
             except Exception as del_e:
-                logging.warning(f"Failed to delete invalid cache file: {del_e}")
+                self.logger.error(f"Failed to delete invalid cache file: {del_e}")
             return None
 
     def _save_object_ids_cache(self, artwork_ids: List[int]) -> None:
         """Save artwork IDs to cache file"""
         if not self.object_ids_cache_file:
             return
-            
+        
         try:
             with self.object_ids_cache_file.open('w') as f:
                 json.dump(artwork_ids, f)
+            self.logger.debug(f"Successfully saved {len(artwork_ids)} artwork IDs to the cache")
         except Exception as e:
-            logging.warning(f"Failed to save artwork IDs cache: {e}")
+            self.logger.error(f"Failed to save artwork IDs cache: {e}")
     
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         '''Implement artwork details fetching for Cleveland'''
