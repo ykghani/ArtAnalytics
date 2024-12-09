@@ -8,4 +8,4 @@ class LogLevel(str, Enum):
     ARTWORK = "artwork"     # Artwork + progress updates
     DEBUG = "debug"         # All logging including debug
 
-log_level = LogLevel("artwork")
+log_level = LogLevel("debug")

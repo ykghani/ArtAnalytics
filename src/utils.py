@@ -72,12 +72,10 @@ def setup_logging(log_dir: Path, log_level: LogLevel, museum_code: Optional[str]
         logger.addHandler(file_handler)
         
         # Add console handler for non-museum loggers
-        if not museum_code:
-            console_handler = logging.StreamHandler()
-            console_handler.setFormatter(
-                logging.Formatter('%(levelname)s - %(message)s')
-            )
-            logger.addHandler(console_handler)
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(
+            logging.Formatter('%(levelname)s - %(message)s'))
+        logger.addHandler(console_handler)
     
     logger.setLevel(level_map.get(log_level, logging.INFO))
     return logger

@@ -178,10 +178,10 @@ def main():
         run_parallel_downloads(museum_ids)
     except KeyboardInterrupt:
         logger.progress(f"Download process interrupted by user")
-        sys.exit(0)
     except Exception as e: 
         logger.error(f'Error in download process: {e}')
-        sys.exit(1)
+    finally: 
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

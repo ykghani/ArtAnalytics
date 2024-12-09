@@ -240,12 +240,14 @@ class CMAImageProcessor(MuseumImageProcessor):
 @dataclass
 class CMAProgressState:
     """Separate state class for CMA progress tracking"""
-    def __init__(self):
-        self.processed_ids: Set[str] = set()
-        self.success_ids: Set[str] = set()
-        self.failed_ids: Set[str] = set()
-        self.error_log: Dict[str, Dict[str, str]] = {}
-        self.total_objects: int = 0
+    processed_ids: Set[str] = set()
+    success_ids: Set[str] = set()
+    failed_ids: Set[str] = set()
+    error_log: Dict[str, Dict[str, str]] = {}
+    last_processed_artwork: int = 0 #Tracks position in data dump array 
+    total_objects: int = 0
+    
+        
 
 class CMAProgressTracker(BaseProgressTracker):
     def __init__(self, progress_file: Path):
@@ -260,6 +262,7 @@ class CMAProgressTracker(BaseProgressTracker):
             'success_ids': list(self.state.success_ids),
             'failed_ids': list(self.state.failed_ids),
             'error_log': self.state.error_log,
+            'last_processed_index': self.state.last_processed_artwork,
             'total_objects': self.state.total_objects
         }
     
@@ -269,4 +272,5 @@ class CMAProgressTracker(BaseProgressTracker):
         self.state.failed_ids = set(data.get('failed_ids', []))
         self.state.error_log = data.get('error_log', {})
         self.state.total_objects = data.get('total_objects', 0)
+        self.state.last_processed_index = data.get('last_processed_index', 0)
         self.logger.debug(f"Restored state with {len(self.state.processed_ids)} processed items")
