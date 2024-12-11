@@ -6,7 +6,6 @@ import concurrent.futures
 
 from src.config import settings
 from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
-from src.log_level import log_level
 from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
@@ -19,7 +18,7 @@ def download_museum_collection_wrapper(args: tuple) -> None:
     try:
         download_museum_collection(museum_id= museum_id)
     except Exception as e:
-        logger = setup_logging(settings.logs_dir, log_level, museum_id)
+        logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
         logger.error(f"Error downloading from {museum_id}: {e}")
         raise
 
@@ -44,10 +43,10 @@ def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None:
             museum_id = future_to_museum[future]
             try:
                 future.result()
-                logger = setup_logging(settings.logs_dir, log_level, museum_id)
+                logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
                 logger.info(f"Successfully completed download for {museum_id}")
             except Exception as e: 
-                logger = setup_logging(settings.logs_dir, log_level, museum_id)
+                logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
                 logger.error(f"Download failed for {museum_id}: {e}")
 
 
@@ -79,6 +78,23 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     museum_info = create_museum_info(museum_id, museum_config)
     museum_paths = settings.get_museum_paths(museum_id)
     
+    cache_file = museum_paths['cache'] / f'{museum_id}_cache.sqlite'
+    
+    if museum_id == 'cma':
+        logging.debug(f"CMA Config - use_data_dump: {museum_config.use_data_dump}")
+        logging.debug(f"CMA Config - data_dump_path: {museum_config.data_dump_path}")
+        logging.debug(f"Settings data_dir: {settings.data_dir}")
+    
+    data_dump_path = None
+    if museum_id == 'cma' and museum_config.use_data_dump:
+        data_dump_path = museum_config.data_dump_path
+        logging.debug(f"CMA data dump config - use_data_dump: {museum_config.use_data_dump}")
+        logging.debug(f"CMA data dump path: {data_dump_path}")
+        logging.debug(f"Data dump exists: {data_dump_path.exists() if data_dump_path else False}")
+        if not data_dump_path.exists():
+            logging.warning(f"Data dump file not found at {data_dump_path}, falling back to API")
+            data_dump_path = None
+    
     query_params = {
     'aic': settings.museum_queries.get_aic_params(),
     'met': settings.museum_queries.get_met_params(),
@@ -91,21 +107,24 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             'processor_class': AICImageProcessor,
             'tracker_class': AICProgressTracker,
             'museum_info': museum_info,
-            'params': query_params
+            'params': query_params,
+            'cache_file': cache_file
         },
         'met': {
             'client_class': MetClient,
             'processor_class': MetImageProcessor,
             'tracker_class': MetProgressTracker, 
             'museum_info': museum_info,
-            'params': query_params
+            'params': query_params,
+            'cache_file': cache_file
         },
         'cma': {
             'client_class': CMAClient,
             'processor_class': CMAImageProcessor,
             'tracker_class': CMAProgressTracker,
             'museum_info': museum_info,
-            'params': query_params
+            'params': query_params,
+            'data_dump_path': data_dump_path
         }
     }
     
@@ -116,43 +135,59 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
 
 def download_museum_collection(museum_id: str) -> None:
     '''Downloads art collection from a specific museum'''
-    museum_config = get_museum_config(museum_id)
-    museum_paths = settings.get_museum_paths(museum_id)
+    logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
+    downloader = None
     
-    #Setup cache and progress tracking paths
-    cache_dir = museum_paths['cache']
-    cache_file = cache_dir / f"{museum_id}_cache.sqlite"
-    progress_file = cache_dir / 'processed_ids.json'
-    cache_dir.mkdir(parents= True, exist_ok= True)
+    try:
+        museum_config = get_museum_config(museum_id)
+        museum_paths = settings.get_museum_paths(museum_id)
+        
+        #Setup cache and progress tracking paths
+        cache_dir = museum_paths['cache']
+        cache_file = cache_dir / f"{museum_id}_cache.sqlite"
+        progress_file = cache_dir / 'processed_ids.json'
+        cache_dir.mkdir(parents= True, exist_ok= True)
+        
+        #Initialize progress tracker
+        progress_tracker = museum_config['tracker_class'](
+            progress_file= progress_file)
+        
+        # Initialize components with museum-specific settings
+        client = museum_config['client_class'](
+            museum_info = museum_config['museum_info'],
+            api_key = settings.museums[museum_id].api_key,
+            cache_file = cache_file,
+            progress_tracker = progress_tracker,
+            data_dump_path=museum_config.get('data_dump_path')
+        )
+        
+        image_processor = museum_config['processor_class'](
+            output_dir=museum_paths['images'],
+            museum_info= museum_config['museum_info']
+        )
+        
+        downloader = ArtworkDownloader(
+            client=client,
+            image_processor=image_processor,
+            progress_tracker=progress_tracker,
+            settings= settings
+        )
+        
+        logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
+        logger.info(f"Starting download for {museum_id} museum")
+        logger.info(f"Museum params: {museum_config['params']}")
+        downloader.download_collection(museum_config['params'])
     
-    #Initialize progress tracker
-    progress_tracker = museum_config['tracker_class'](
-        progress_file= progress_file)
+    except KeyboardInterrupt:
+        logger.info(f"Download interrupted by user")
+        if downloader: 
+            downloader._generate_summary_report()
+            downloader._log_summary(downloader._generate_summary_report())
+        raise
     
-    # Initialize components with museum-specific settings
-    client = museum_config['client_class'](
-        museum_info = museum_config['museum_info'],
-        api_key = settings.museums[museum_id].api_key,
-        cache_file = cache_file,
-        progress_tracker = progress_tracker
-    )
-    
-    image_processor = museum_config['processor_class'](
-        output_dir=museum_paths['images'],
-        museum_info= museum_config['museum_info']
-    )
-    
-    downloader = ArtworkDownloader(
-        client=client,
-        image_processor=image_processor,
-        progress_tracker=progress_tracker,
-        settings= settings
-    )
-    
-    logger = setup_logging(settings.logs_dir, log_level, museum_id)
-    logger.info(f"Starting download for {museum_id} museum")
-    logger.info(f"Museum params: {museum_config['params']}")
-    downloader.download_collection(museum_config['params'])
+    except Exception as e:
+        logger.error(f"Error during download: {e}")
+        raise
 
 def main():
     # Initialize settings
@@ -160,7 +195,7 @@ def main():
     settings.initialize_paths(project_root)
     
     # Setup logging with configured level
-    logger = setup_logging(settings.logs_dir, log_level, None)
+    logger = setup_logging(settings.logs_dir, settings.log_level, None)
     
     if len(sys.argv) > 1:
         museum_ids = sys.argv[1: ]
@@ -178,10 +213,10 @@ def main():
         run_parallel_downloads(museum_ids)
     except KeyboardInterrupt:
         logger.progress(f"Download process interrupted by user")
-        sys.exit(0)
     except Exception as e: 
         logger.error(f'Error in download process: {e}')
-        sys.exit(1)
+    finally:
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()

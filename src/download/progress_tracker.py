@@ -6,7 +6,8 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 
-from ..log_level import LogLevel, log_level
+from ..config import settings 
+from ..log_level import LogLevel
 from ..utils import setup_logging
 
 @dataclass
@@ -28,7 +29,7 @@ class BaseProgressTracker(ABC):
         # Ensure we have a Path object
         self.progress_file = Path(progress_file) if not isinstance(progress_file, Path) else progress_file
         self.state = ProgressState()
-        self.logger = setup_logging(self.progress_file.parent, LogLevel.PROGRESS, 'progress')
+        self.logger = setup_logging(self.progress_file.parent, settings.log_level, 'progress')
         self._load_progress()
 
     
