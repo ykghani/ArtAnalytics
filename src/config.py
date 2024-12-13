@@ -1,3 +1,4 @@
+import os 
 from pathlib import Path
 from pydantic import EmailStr, Field
 from pydantic_settings import BaseSettings  
@@ -5,7 +6,7 @@ from typing import Optional, Dict, Any
 from enum import Enum
 
 from .museums.museum_info import MuseumInfo
-from .log_level import log_level
+from .log_level import LogLevel
 
 
 class MuseumQuerySettings(BaseSettings):
@@ -98,6 +99,9 @@ class MuseumConfig(BaseSettings):
     contact_email: EmailStr = Field(default= "")
     api_key: Optional[str] = Field(default=None)
     code: str = Field(...)
+    use_data_dump: bool = Field(default=False) 
+    data_dump_path: Optional[Path] = Field(default=None) 
+
 
     def to_museum_info(self) -> MuseumInfo:
         """Convert config to MuseumInfo instance"""
@@ -118,6 +122,12 @@ class MuseumConfig(BaseSettings):
 class Settings(BaseSettings):
     """Application settings with environment variable support."""
     
+    log_level: LogLevel = Field(
+        default=LogLevel.PROGRESS,
+        env='LOG_LEVEL',
+        description="Logging level for the application"
+    )
+    
     # Common Settings
     default_contact_email: EmailStr = Field(..., env='DEFAULT_CONTACT_EMAIL')
     
@@ -133,13 +143,16 @@ class Settings(BaseSettings):
     cma_api_base_url: str = Field(default="https://openaccess-api.clevelandart.org/api", env='CLEVELAND_API_BASE_URL')
     cma_user_agent: str = Field(default="Cleveland-ArtDownloadBot/1.0", env='CLEVELAND_USER_AGENT')
     cma_rate_limit: float = Field(default=80.0, env='CLEVELAND_RATE_LIMIT')
+    cma_use_data_dump: bool = Field(default=False, env='CMA_USE_DATA_DUMP')
+    cma_data_dump_path: str = Field(default='CMA_data.json', env='CMA_DATA_DUMP_PATH')
+
 
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters"
     )
-
-
+    
+    
     def get_museum_info(self, museum_id: str) -> MuseumInfo:
         """Get MuseumInfo for a specific museum"""
         if museum_id not in self.museums:
@@ -174,7 +187,9 @@ class Settings(BaseSettings):
                 rate_limit= self.cma_rate_limit,
                 contact_email=self.default_contact_email,
                 code= 'cma',
-                name= 'Cleveland Museum of Art'
+                name= 'Cleveland Museum of Art',
+                use_data_dump= self.cma_use_data_dump,
+                data_dump_path= self.data_dir / self.cma_data_dump_path
             )
         }
     

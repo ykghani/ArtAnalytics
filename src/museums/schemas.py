@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any, TYPE_CHECKING
 
 from ..config import settings
-from ..log_level import log_level
 from .museum_info import MuseumInfo
 from ..utils import setup_logging
 
@@ -115,7 +114,7 @@ class ArtworkMetadataFactory(ABC):
     """Abstract base factory for creating ArtworkMetadata objects"""
     def __init__(self, museum_code: str):
         settings = get_settings()
-        self.logger = setup_logging(settings.logs_dir, log_level, museum_code)
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, museum_code)
         
     @abstractmethod
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
@@ -282,6 +281,10 @@ class CMAArtworkFactory(ArtworkMetadataFactory):
         super().__init__('cma')
     
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
+        artwork_id = data.get('id')
+        if artwork_id is None:
+            return None
+        
         # Handle dimensions
         dimensions_data = data.get('dimensions', {}).get('framed', {})
         height = dimensions_data.get('height')
@@ -300,7 +303,7 @@ class CMAArtworkFactory(ArtworkMetadataFactory):
                 image_urls[img_type] = images[img_type]['url']
         
         return ArtworkMetadata(
-            id=str(data['id']),
+            id=artwork_id,
             accession_number=data.get('accession_number', ''),
             title=data.get('title', 'Untitled'),
             artist=creator.get('description', 'Unknown'),
