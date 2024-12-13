@@ -105,6 +105,12 @@ def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -
     Returns:
         Sanitized filename with format: "{aic_id}_{truncated_title}_{artist}.jpg"
     """
+    if not id:
+        raise ValueError("ID cannot be None or empty")
+    if not title:
+        title = "Untitled"
+    if not artist:
+        artist = "Unknown"
     
     # Remove invalid characters from title and artist
     def clean_text(text: str) -> str:

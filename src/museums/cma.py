@@ -279,15 +279,13 @@ class CMAImageProcessor(MuseumImageProcessor):
 @dataclass
 class CMAProgressState:
     """Separate state class for CMA progress tracking"""
-
-    processed_ids: Set[str] = set()
-    success_ids: Set[str] = set()
-    failed_ids: Set[str] = set()
-    error_log: Dict[str, Dict[str, str]] = {}
-    last_processed_artwork: int = 0 #Tracks position in data dump array 
+    processed_ids: Set[str] = field(default_factory=set)
+    success_ids: Set[str] = field(default_factory=set)
+    failed_ids: Set[str] = field(default_factory=set)
+    error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
     total_objects: int = 0
-    
-        
+    last_processed_index: int = 0
+
 
 class CMAProgressTracker(BaseProgressTracker):
     def __init__(self, progress_file: Path):

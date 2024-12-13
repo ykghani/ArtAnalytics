@@ -281,6 +281,11 @@ class CMAArtworkFactory(ArtworkMetadataFactory):
         super().__init__('cma')
     
     def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
+        
+        if not data:
+            self.logger.debug(f"Received empty data")
+            return None 
+        
         artwork_id = data.get('id')
         if artwork_id is None:
             return None
