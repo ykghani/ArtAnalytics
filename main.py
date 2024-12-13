@@ -183,7 +183,6 @@ def download_museum_collection(museum_id: str) -> None:
         if downloader: 
             downloader._generate_summary_report()
             downloader._log_summary(downloader._generate_summary_report())
-        raise
     
     except Exception as e:
         logger.error(f"Error during download: {e}")
@@ -209,10 +208,17 @@ def main():
         print(f"Available museums: {', '.join(valid_museums)}")
         sys.exit(1)
     
+    downloaders = []
     try:
         run_parallel_downloads(museum_ids)
     except KeyboardInterrupt:
         logger.progress(f"Download process interrupted by user")
+        for downloader in downloaders:  # Print summary for each active downloader
+            try:
+                summary = downloader._generate_summary_report()
+                downloader._log_summary(summary)
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
     except Exception as e: 
         logger.error(f'Error in download process: {e}')
     finally:
