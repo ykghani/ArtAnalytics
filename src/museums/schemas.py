@@ -160,9 +160,9 @@ class AICArtworkFactory(ArtworkMetadataFactory):
             if image_id:
                 base_url = "https://www.artic.edu/iiif/2"
                 image_urls = {
-                    'web': f"{base_url}/{image_id}/full/843,/0/default.jpg",
-                    'print': f"{base_url}/{image_id}/full/1686,/0/default.jpg", 
-                    'full': f"{base_url}/{image_id}/full/3000,/0/default.jpg"
+                    'web': f"{base_url}/{image_id}/full/843,/0/default.jpg",  
+                    'print': f"{base_url}/{image_id}/full/,1686/0/default.jpg",  # Scale by height
+                    'full': f"{base_url}/{image_id}/full/max/0/default.jpg"  # Get native size
                 }
             
             return ArtworkMetadata(

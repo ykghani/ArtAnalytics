@@ -146,6 +146,7 @@ class ArtworkDownloader:
             else:
                 self.logger.debug(f"No image available for {artwork_info}")
                 self.progress_tracker.log_status(artwork_metadata.id, 'skipped', 'No image available')
+                return
                 
         except Exception as e:
             error_msg = f'Failed to process {artwork_info}: {str(e)}'
