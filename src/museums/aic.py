@@ -3,6 +3,7 @@ from pathlib import Path
 from PIL import Image
 import logging
 from io import BytesIO
+import json
 from dataclasses import dataclass, field 
 
 from .base import MuseumAPIClient, MuseumImageProcessor
@@ -16,11 +17,13 @@ class AICClient(MuseumAPIClient):
     """Art Institute of Chicago API Client implementation"""
     
     def __init__(self, museum_info: MuseumInfo, api_key: Optional[str] = None, 
-                 cache_file: Optional[Path] = None, progress_tracker: Optional[BaseProgressTracker] = None):
+                 cache_file: Optional[Path] = None, progress_tracker: Optional[BaseProgressTracker] = None,
+                 data_dump_path: Optional[Path] = None):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = AICArtworkFactory()
-        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')
+        self.data_dump_path = data_dump_path
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'aic')
     
     def _get_auth_header(self) -> str:
         if not self.api_key:
@@ -60,10 +63,10 @@ class AICClient(MuseumAPIClient):
         response.raise_for_status()
         return response.json()
     
-    def build_image_url(self, image_id: str, **kwargs) -> str:
-        """Build IIIF image URL"""
-        size = kwargs.get('size', 'full')
-        return f"https://www.artic.edu/iiif/2/{image_id}/{size}/0/default.jpg"
+    # def build_image_url(self, image_id: str, **kwargs) -> str:
+    #     """Build IIIF image URL"""
+    #     size = kwargs.get('size', 'full')
+    #     return f"https://www.artic.edu/iiif/2/{image_id}/{size}/0/default.jpg"
     
     def search_artworks(self, query: str, **kwargs) -> Dict[str, Any]:
         """Search for artworks"""
@@ -72,58 +75,81 @@ class AICClient(MuseumAPIClient):
         response = self.session.get(url, params=params, timeout=(5, 30))
         response.raise_for_status()
         return response.json()
-        
+    
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        try:
-            start_page = 1
-            if isinstance(self.progress_tracker, AICProgressTracker):
-                last_page = self.progress_tracker.get_last_page()
-                if last_page is not None and last_page > 0:  # Changed this line
-                    start_page = last_page
-                    self.logger.info(f"Resuming from page {start_page}")
+        """Choose data source based on availability"""
+        self.logger.debug(f"Data dump path type: {type(self.data_dump_path)}")
+        self.logger.debug(f"Data dump path: {self.data_dump_path}")
+        self.logger.debug(f"Data dump exists: {self.data_dump_path and self.data_dump_path.exists() if self.data_dump_path else False}")
+        
+        if self.data_dump_path and self.data_dump_path.exists():
+            self.logger.info(f"Using data dump for collection iteration")
+            yield from self._iter_data_dump()
+        else:
+            self.logger.info(f"Using API for collection iteration")
+            yield from self._iter_api_collection(**params) 
             
-            current_page = start_page
-            while True:
+    def _iter_api_collection(self, **params) -> Iterator[ArtworkMetadata]:
+        """Iterate through API results with pagination"""
+        page = 1
+        limit = 100  # AIC's standard page size
+        
+        while True:
+            try:
+                params['limit'] = limit
+                data = self.get_artwork_page(page, params)
+                
+                if not data.get('data'):
+                    break
+                    
+                for artwork in data['data']:
+                    yield self.artwork_factory.create_metadata(artwork)
+                    
+                if isinstance(self.progress_tracker, AICProgressTracker):
+                    self.progress_tracker.state.last_page = page
+                    total_pages = data.get('pagination', {}).get('total_pages', 0)
+                    self.progress_tracker.state.total_pages = total_pages
+                    
+                page += 1
+                
+            except Exception as e:
+                self.logger.error(f"Error fetching page {page}: {e}")
+                raise
+        
+    def _iter_data_dump(self) -> Iterator[ArtworkMetadata]:
+        """Iterate through JSON files in data dump directory"""
+        try:
+            # Get and sort all JSON files - this creates a stable order
+            artwork_files = sorted(list(self.data_dump_path.glob('*.json')))
+            total_files = len(artwork_files)
+            
+            if isinstance(self.progress_tracker, AICProgressTracker):
+                self.progress_tracker.state.total_files = total_files
+                start_idx = self.progress_tracker.state.last_processed_index
+            else:
+                start_idx = 0
+                
+            self.logger.info(f"Starting from index {start_idx} of {total_files} files")
+            
+            # Process files from the last saved index
+            for idx, file_path in enumerate(artwork_files[start_idx:], start=start_idx):
                 try:
-                    response = self.get_artwork_page(current_page, params)
+                    with open(file_path) as f:
+                        artwork_data = json.load(f)
                     
-                    if not response:
-                        self.logger.warning("Empty response received")  # Add this
-                        break
+                    metadata = self.artwork_factory.create_metadata(artwork_data)
+                    if metadata and metadata.is_public_domain:
+                        if isinstance(self.progress_tracker, AICProgressTracker):
+                            self.progress_tracker.state.last_processed_index = idx
+                            self.progress_tracker._save_progress()
+                        yield metadata
                         
-                    data = response.get('data', [])
-                    if not data:
-                        self.logger.info("No more data available")  # Add this
-                        break
-                    
-                    self.logger.progress(f"Processing page {current_page}")  # Add this
-                    
-                    for item in data:
-                        try:
-                            artwork_id = item.get('id')
-                            if not artwork_id:
-                                self.logger.warning("Artwork missing ID, skipping")  # Add this
-                                continue
-                                
-                            artwork = self._get_artwork_details_impl(str(artwork_id))
-                            if artwork:
-                                artwork.page = current_page
-                                if isinstance(self.progress_tracker, AICProgressTracker):
-                                    self.progress_tracker.update_page(current_page)
-                                self.logger.artwork(f"Successfully processed artwork {artwork_id}")  # Add this
-                                yield artwork
-                        except Exception as e:
-                            self.logger.error(f"Error processing artwork {item.get('id')}: {e}")
-                            continue
-                    
-                    current_page += 1
-                    
                 except Exception as e:
-                    self.logger.error(f"Error processing page {current_page}: {e}")
-                    raise
+                    self.logger.error(f"Error processing file {file_path}: {e}")
+                    continue
                     
         except Exception as e:
-            self.logger.error(f"Error in collection iteration: {e}")
+            self.logger.error(f"Error reading data dump directory: {e}")
             raise
             
     def get_collection_info(self) -> Dict[str, Any]:
@@ -147,7 +173,7 @@ class AICImageProcessor(MuseumImageProcessor):
     """Art Institute of Chicago image processor implementation"""
     def __init__(self, output_dir: Path, museum_info: MuseumInfo):
         super().__init__(output_dir, museum_info)
-        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'aic')
     
     def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
         """Process and save an artwork image"""
@@ -187,12 +213,14 @@ class AICProgressState(ProgressState):
     success_ids: Set[str] = field(default_factory=set)    
     failed_ids: Set[str] = field(default_factory=set)     
     error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    last_processed_index: int = 0  # For data dump processing
+    total_files: int = 0
 
 class AICProgressTracker(BaseProgressTracker):
     def __init__(self, progress_file: Path):
         self.progress_file = progress_file  
         self.state = AICProgressState()     
-        self.logger = setup_logging(settings.logs_dir, log_level, 'aic')  
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'aic')  
         self._load_progress()
     
     def get_state_dict(self) -> Dict[str, Any]:

@@ -80,12 +80,27 @@ class ArtworkDownloader:
         return any(err in error_str for err in retriable_errors)
     
     def _get_image_data(self, artwork_metadata: ArtworkMetadata) -> Optional[bytes]:
-        """Get image data from artwork metadata"""
-        if artwork_metadata.primary_image_url:
-            response = self.client.session.get(artwork_metadata.primary_image_url)
-            response.raise_for_status()
-            return response.content
-        return None
+        """Get image data for artwork"""
+        try:
+            # Check for primary image URL first
+            if artwork_metadata.primary_image_url:
+                time.sleep(self.rate_limit_delay)
+                response = self.client.session.get(artwork_metadata.primary_image_url)
+                response.raise_for_status()
+                return response.content
+                
+            # Legacy/compatibility for AIC image_id if needed
+            elif hasattr(artwork_metadata, 'image_id') and artwork_metadata.image_id:
+                url = self.client.build_image_url(artwork_metadata.image_id)
+                response = self.client.session.get(url)
+                response.raise_for_status()
+                return response.content
+                
+            return None
+            
+        except Exception as e:
+            self.logger.error(f"Error downloading image: {e}")
+            return None
 
     def download_artwork(self, artwork_metadata: ArtworkMetadata) -> None:
         """Download and process a single artwork."""

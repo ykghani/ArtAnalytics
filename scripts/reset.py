@@ -8,7 +8,9 @@ import sqlite3
 from src.config import settings
 from src.database.database import Database
 from src.database.models import Base, Museum, Artwork
-from src.log_level import LogLevel, log_level
+# from src.log_level import LogLevel, log_level
+# from src.config import log_level
+from src.config import settings
 from src.utils import setup_logging
 
 
@@ -19,10 +21,7 @@ def reset_database(museum_code: Optional[str], logger) -> None:
     try:
         if museum_code:
             with db.get_session() as session:
-                # First ensure tables exist
                 Base.metadata.create_all(db.engine)
-                
-                # Then initialize museums if needed
                 db.init_museums(session)
                 
                 museum = session.query(Museum).filter_by(code=museum_code).first()
@@ -31,13 +30,11 @@ def reset_database(museum_code: Optional[str], logger) -> None:
                     session.query(Artwork).filter_by(museum_id=museum.id).delete()
                     session.commit()
         else:
-            # Full reset
             logger.progress("Dropping all database tables")
             Base.metadata.drop_all(db.engine)
             logger.progress("Recreating database schema")
             Base.metadata.create_all(db.engine)
             
-            # Initialize museums after recreation
             with db.get_session() as session:
                 db.init_museums(session)
     except Exception as e:
@@ -138,9 +135,9 @@ def main():
     project_root = Path(__file__).parent.parent
     settings.initialize_paths(project_root)
     
-    logger = setup_logging(settings.logs_dir, log_level)
+    # Initialize logger using settings log level
+    logger = setup_logging(settings.logs_dir, settings.log_level)
 
-    # Confirmation prompt
     target = args.museum if args.museum else "ALL museums"
     if not args.force:
         confirm = input(
@@ -148,12 +145,12 @@ def main():
             f"This cannot be undone. Continue? [y/N]: "
         )
         if confirm.lower() != 'y':
-            logging.info("Operation cancelled")
+            logger.info("Operation cancelled")
             return
 
     try:
-        reset_database(args.museum, logger= logger)
-        clean_museum_files(args.museum, logger= logger)
+        reset_database(args.museum, logger)
+        clean_museum_files(args.museum, logger)
         logger.progress(f"Successfully reset data for {target}")
         
         logger.progress("\nVerifying cleanup:")
