@@ -125,71 +125,100 @@ class AICArtworkFactory(ArtworkMetadataFactory):
     def __init__(self):
         super().__init__('aic')
     
-    def create_metadata(self, data: Dict[str, Any]) -> ArtworkMetadata:
-        # Extract dimensions data
-        dimensions_detail = data.get('dimensions_detail', [{}])[0]
-        height = dimensions_detail.get('height_cm')
-        width = dimensions_detail.get('width_cm')
-        depth = dimensions_detail.get('depth_cm')
-        diameter = dimensions_detail.get('diameter_cm')
+    def create_metadata(self, data: Dict[str, Any]) -> Optional[ArtworkMetadata]:
+        # Validate required fields
+        if not data or 'id' not in data:
+            return None
+            
+        try:
+            # Extract dimensions data safely
+            dimensions_detail = data.get('dimensions_detail', [{}])
+            dims = dimensions_detail[0] if dimensions_detail else {}
+            height = dims.get('height_cm')
+            width = dims.get('width_cm')
+            depth = dims.get('depth_cm')
+            diameter = dims.get('diameter_cm')
 
-        # Extract color data
-        color_data = data.get('color', {})
-        
-        # Extract artist data from first constituent if available
-        artist_info = data.get('artist_display', '').split('\n')[0] if data.get('artist_display') else 'Unknown Artist'
-        
-        return ArtworkMetadata(
-            id=str(data['id']),
-            accession_number=data.get('main_reference_number', ''),
-            title=data.get('title', 'Untitled'),
-            artist=data.get('artist_title', artist_info),
-            artist_display=data.get('artist_display'),
-            artist_bio=None,  # AIC doesn't provide this
-            artist_nationality=None,  # AIC doesn't provide this directly
-            artist_birth_year=None,  # Would need to parse from artist_display
-            artist_death_year=None,  # Would need to parse from artist_display
+            # Extract color data safely
+            color_data = data.get('color', {})
             
-            date_display=data.get('date_display'),
-            date_start=str(data.get('date_start')) if data.get('date_start') else None,
-            date_end=str(data.get('date_end')) if data.get('date_end') else None,
+            # Process artist display info
+            artist_display = data.get('artist_display', '')
+            artist_info = artist_display.split('\n')[0] if artist_display else 'Unknown Artist'
             
-            medium=data.get('medium_display'),
-            dimensions=data.get('dimensions'),
-            height_cm=height,
-            width_cm=width,
-            depth_cm=depth,
-            diameter_cm=diameter,
+            # Extract dates
+            date_start = data.get('date_start')
+            date_end = data.get('date_end')
             
-            department=data.get('department_title'),
-            artwork_type=data.get('artwork_type_title'),
-            culture=[data.get('place_of_origin')] if data.get('place_of_origin') else [],
-            style=None,  # AIC doesn't provide this directly
+            # Construct image URLs using IIIF pattern
+            image_id = data.get('image_id')
+            if image_id is None:
+                self.logger.debug(f"Artwork {data.get('id')} has no image data")
+                return None
+                
+            image_urls = {}
+            if image_id:
+                base_url = "https://www.artic.edu/iiif/2"
+                image_urls = {
+                    'web': f"{base_url}/{image_id}/full/843,/0/default.jpg",
+                    'print': f"{base_url}/{image_id}/full/1686,/0/default.jpg", 
+                    'full': f"{base_url}/{image_id}/full/3000,/0/default.jpg"
+                }
             
-            is_public_domain=data.get('is_public_domain', False),
-            credit_line=data.get('credit_line'),
-            is_on_view=data.get('is_on_view', False),
-            is_highlight=False,  # AIC doesn't have this concept
-            is_boosted=data.get('is_boosted', False),
-            boost_rank=data.get('boost_rank'),
-            has_not_been_viewed_much=data.get('has_not_been_viewed_much', False),
-            
-            description=data.get('description'),
-            short_description=data.get('short_description'),
-            provenance=data.get('provenance_text'),
-            inscriptions=[data.get('inscriptions')] if data.get('inscriptions') else [],
-            fun_fact=None,  # AIC doesn't have this
-            style_titles=data.get('style_titles', []),
-            keywords=data.get('term_titles', []),
-            
-            primary_image_url=None,  # AIC uses IIIF images
-            image_urls={},  # Would need to construct IIIF URLs
-            
-            colorfulness=data.get('colorfulness'),
-            color_h=color_data.get('h'),
-            color_s=color_data.get('s'),
-            color_l=color_data.get('l')
-        )
+            return ArtworkMetadata(
+                id=str(data['id']),
+                accession_number=data.get('main_reference_number', ''),
+                title=data.get('title', 'Untitled'),
+                artist=data.get('artist_title', artist_info),
+                artist_display=artist_display,
+                artist_bio=None,  # AIC doesn't provide this
+                artist_nationality=None,  # AIC doesn't provide this directly
+                artist_birth_year=None,  # Would need to parse from artist_display
+                artist_death_year=None,  # Would need to parse from artist_display
+                
+                date_display=data.get('date_display', ''),
+                date_start=str(date_start) if date_start is not None else None,
+                date_end=str(date_end) if date_end is not None else None,
+                
+                medium=data.get('medium_display', ''),
+                dimensions=data.get('dimensions', ''),
+                height_cm=height,
+                width_cm=width,
+                depth_cm=depth,
+                diameter_cm=diameter,
+                
+                department=data.get('department_title', ''),
+                artwork_type=data.get('artwork_type_title', ''),
+                culture=[data.get('place_of_origin')] if data.get('place_of_origin') else [],
+                style=None,
+                
+                is_public_domain=bool(data.get('is_public_domain', False)),
+                credit_line=data.get('credit_line', ''),
+                is_on_view=bool(data.get('is_on_view', False)),
+                is_highlight=False,
+                is_boosted=bool(data.get('is_boosted', False)),
+                boost_rank=data.get('boost_rank'),
+                has_not_been_viewed_much=bool(data.get('has_not_been_viewed_much', False)),
+                
+                description=data.get('description'),
+                short_description=data.get('short_description'),
+                provenance=data.get('provenance_text', ''),
+                inscriptions=[insc for insc in [data.get('inscriptions')] if insc],
+                fun_fact=None,
+                style_titles=data.get('style_titles', []),
+                keywords=data.get('term_titles', []),
+                
+                primary_image_url=image_urls.get('web') if image_urls else None,
+                image_urls=image_urls,
+                
+                colorfulness=data.get('colorfulness'),
+                color_h=color_data.get('h'),
+                color_s=color_data.get('s'),
+                color_l=color_data.get('l')
+            )
+        except Exception as e:
+            self.logger.error(f"Error creating metadata for artwork {data.get('id', 'unknown')}: {str(e)}")
+            return None
 
 class MetArtworkFactory(ArtworkMetadataFactory):
     """Factory for creating Metropolitan Museum artwork metadata"""

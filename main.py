@@ -72,58 +72,65 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     '''Get museum specific configuration and params'''
     if museum_id not in settings.museums:
         raise ValueError(f"Unknown museum ID: {museum_id}")
-        
-    # museum_info = settings.get_museum_info(museum_id)
+    
     museum_config = settings.museums[museum_id]
     museum_info = create_museum_info(museum_id, museum_config)
     museum_paths = settings.get_museum_paths(museum_id)
     
+    # Basic config common to all museums
     cache_file = museum_paths['cache'] / f'{museum_id}_cache.sqlite'
+    query_params = {
+        'aic': settings.museum_queries.get_aic_params(),
+        'met': settings.museum_queries.get_met_params(),
+        'cma': settings.museum_queries.get_cma_params()
+    }.get(museum_id, {})
     
-    if museum_id == 'cma':
-        logging.debug(f"CMA Config - use_data_dump: {museum_config.use_data_dump}")
-        logging.debug(f"CMA Config - data_dump_path: {museum_config.data_dump_path}")
-        logging.debug(f"Settings data_dir: {settings.data_dir}")
-    
+    # Handle data dump configuration
     data_dump_path = None
-    if museum_id == 'cma' and museum_config.use_data_dump:
-        data_dump_path = museum_config.data_dump_path
-        logging.debug(f"CMA data dump config - use_data_dump: {museum_config.use_data_dump}")
-        logging.debug(f"CMA data dump path: {data_dump_path}")
-        logging.debug(f"Data dump exists: {data_dump_path.exists() if data_dump_path else False}")
-        if not data_dump_path.exists():
-            logging.warning(f"Data dump file not found at {data_dump_path}, falling back to API")
+    if museum_config.use_data_dump:
+        # Set museum-specific data dump paths
+        if museum_id == 'aic':
+            data_dump_path = settings.data_dir / 'artic-api-data' / 'AIC_json' / 'artworks'
+        else:
+            data_dump_path = museum_config.data_dump_path
+            
+        # Log data dump configuration
+        logging.debug(f"{museum_id.upper()} data dump config:")
+        logging.debug(f"  - use_data_dump: {museum_config.use_data_dump}")
+        logging.debug(f"  - data_dump_path: {data_dump_path}")
+        
+        # Verify data dump exists
+        if data_dump_path and not data_dump_path.exists():
+            logging.warning(f"Data dump not found at {data_dump_path}, falling back to API")
             data_dump_path = None
     
-    query_params = {
-    'aic': settings.museum_queries.get_aic_params(),
-    'met': settings.museum_queries.get_met_params(),
-    'cma': settings.museum_queries.get_cma_params()
-            }.get(museum_id, {})
-        
+    # Base configuration common to all museums
+    base_config = {
+        'museum_info': museum_info,
+        'params': query_params,
+        'cache_file': cache_file
+    }
+    
+    # Museum-specific configurations
     configs = {
         'aic': {
+            **base_config,
             'client_class': AICClient,
             'processor_class': AICImageProcessor,
             'tracker_class': AICProgressTracker,
-            'museum_info': museum_info,
-            'params': query_params,
-            'cache_file': cache_file
+            'data_dump_path': data_dump_path
         },
         'met': {
+            **base_config,
             'client_class': MetClient,
             'processor_class': MetImageProcessor,
-            'tracker_class': MetProgressTracker, 
-            'museum_info': museum_info,
-            'params': query_params,
-            'cache_file': cache_file
+            'tracker_class': MetProgressTracker
         },
         'cma': {
+            **base_config,
             'client_class': CMAClient,
             'processor_class': CMAImageProcessor,
             'tracker_class': CMAProgressTracker,
-            'museum_info': museum_info,
-            'params': query_params,
             'data_dump_path': data_dump_path
         }
     }

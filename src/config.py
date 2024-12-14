@@ -135,6 +135,8 @@ class Settings(BaseSettings):
     aic_api_base_url: str = Field(default="https://api.artic.edu/api/v1/artworks", env='AIC_API_BASE_URL')
     aic_user_agent: str = Field(default="AIC-ArtDownloadBot/1.0", env='AIC_USER_AGENT')
     aic_rate_limit: float = Field(default=1.0, env='AIC_RATE_LIMIT')
+    aic_use_data_dump: bool = Field(default=False, env='AIC_USE_DATA_DUMP')
+    aic_data_dump_path: str = Field(default='artic-api-data/AIC_json/artworks', env='AIC_DATA_DUMP_PATH')
     
     met_api_base_url: str = Field(default="https://collectionapi.metmuseum.org/public/collection/v1", env='MET_API_BASE_URL')
     met_user_agent: str = Field(default="MET-ArtDownloadBot/1.0", env='MET_USER_AGENT')
@@ -171,7 +173,9 @@ class Settings(BaseSettings):
                 rate_limit=self.aic_rate_limit,
                 contact_email=self.default_contact_email,
                 code='aic',
-                name='Art Institute of Chicago'
+                name='Art Institute of Chicago',
+                use_data_dump=self.aic_use_data_dump,
+                data_dump_path=self.data_dir / self.aic_data_dump_path
             ),
             'met': MuseumConfig(
                 api_base_url=self.met_api_base_url,
