@@ -16,6 +16,10 @@ python-dotenv = "^0.21.0"
 requests-cache = "^1.2.1"
 sqlalchemy = "^2.0.36"
 alembic = "^1.14.0"
+fastapi = "^0.115.6"
+uvicorn = "^0.34.0"
+rumps = "^0.4.0"
+py2app = "^0.28.8"
 
 [tool.poetry.group.dev.dependencies]
 ipython = "^8.29.0"

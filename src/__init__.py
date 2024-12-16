@@ -9,6 +9,7 @@ from .museums import (
 )
 from .config import settings
 from .log_level import LogLevel 
+from .displays import DisplayRatios
 
 __all__ = [
     'ArtworkDownloader',
@@ -21,5 +22,6 @@ __all__ = [
     'AICClient',
     'AICImageProcessor',
     'settings',
-    'LogLevel'
+    'LogLevel',
+    'DisplayRatios'
 ]

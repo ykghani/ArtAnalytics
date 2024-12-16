@@ -20,6 +20,17 @@ typing-extensions = ">=4"
 tz = ["backports.zoneinfo"]
 
 [[package]]
+name = "altgraph"
+version = "0.17.4"
+description = "Python graph (network) package"
+optional = false
+python-versions = "*"
+files = [
+    {file = "altgraph-0.17.4-py2.py3-none-any.whl", hash = "sha256:642743b4750de17e655e6711601b077bc6598dbfa3ba5fa2b2a35ce12b508dff"},
+    {file = "altgraph-0.17.4.tar.gz", hash = "sha256:1b5afbb98f6c4dcadb2e2ae6ab9fa994bbb8c1d75f4fa96d340f9437ae454406"},
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 description = "Reusable constraint types to use with typing.Annotated"
@@ -466,6 +477,20 @@ files = [
 ]
 
 [[package]]
+name = "click"
+version = "8.1.7"
+description = "Composable command line interface toolkit"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "click-8.1.7-py3-none-any.whl", hash = "sha256:ae74fb96c20a0277a1d615f1e4d73c8414f5a98db8b799a7931d1582f3390c28"},
+    {file = "click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de"},
+]
+
+[package.dependencies]
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 description = "Cross-platform colored terminal text."
@@ -686,6 +711,26 @@ files = [
 
 [package.extras]
 tests = ["asttokens (>=2.1.0)", "coverage", "coverage-enable-subprocess", "ipython", "littleutils", "pytest", "rich"]
+
+[[package]]
+name = "fastapi"
+version = "0.115.6"
+description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "fastapi-0.115.6-py3-none-any.whl", hash = "sha256:e9240b29e36fa8f4bb7290316988e90c381e5092e0cbe84e7818cc3713bcf305"},
+    {file = "fastapi-0.115.6.tar.gz", hash = "sha256:9ec46f7addc14ea472958a96aae5b5de65f39721a46aaf5705c480d9a8b76654"},
+]
+
+[package.dependencies]
+pydantic = ">=1.7.4,<1.8 || >1.8,<1.8.1 || >1.8.1,<2.0.0 || >2.0.0,<2.0.1 || >2.0.1,<2.1.0 || >2.1.0,<3.0.0"
+starlette = ">=0.40.0,<0.42.0"
+typing-extensions = ">=4.8.0"
+
+[package.extras]
+all = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "itsdangerous (>=1.1.0)", "jinja2 (>=2.11.2)", "orjson (>=3.2.1)", "pydantic-extra-types (>=2.0.0)", "pydantic-settings (>=2.0.0)", "python-multipart (>=0.0.7)", "pyyaml (>=5.3.1)", "ujson (>=4.0.1,!=4.0.2,!=4.1.0,!=4.2.0,!=4.3.0,!=5.0.0,!=5.1.0)", "uvicorn[standard] (>=0.12.0)"]
+standard = ["email-validator (>=2.0.0)", "fastapi-cli[standard] (>=0.0.5)", "httpx (>=0.23.0)", "jinja2 (>=2.11.2)", "python-multipart (>=0.0.7)", "uvicorn[standard] (>=0.12.0)"]
 
 [[package]]
 name = "fastjsonschema"
@@ -1533,6 +1578,20 @@ files = [
 ]
 
 [[package]]
+name = "macholib"
+version = "1.16.3"
+description = "Mach-O header analysis and editing"
+optional = false
+python-versions = "*"
+files = [
+    {file = "macholib-1.16.3-py2.py3-none-any.whl", hash = "sha256:0e315d7583d38b8c77e815b1ecbdbf504a8258d8b3e17b61165c6feb60d18f2c"},
+    {file = "macholib-1.16.3.tar.gz", hash = "sha256:07ae9e15e8e4cd9a788013d81f5908b3609aa76f9b1421bae9c4d7606ec86a30"},
+]
+
+[package.dependencies]
+altgraph = ">=0.17"
+
+[[package]]
 name = "mako"
 version = "1.3.6"
 description = "A super-fast templating language that borrows the best ideas from the existing templating languages."
@@ -1708,6 +1767,21 @@ files = [
     {file = "mistune-3.0.2-py3-none-any.whl", hash = "sha256:71481854c30fdbc938963d3605b72501f5c10a9320ecd412c121c163a1c7d205"},
     {file = "mistune-3.0.2.tar.gz", hash = "sha256:fc7f93ded930c92394ef2cb6f04a8aabab4117a91449e72dcc8dfa646a508be8"},
 ]
+
+[[package]]
+name = "modulegraph"
+version = "0.19.6"
+description = "Python module dependency analysis tool"
+optional = false
+python-versions = "*"
+files = [
+    {file = "modulegraph-0.19.6-py2.py3-none-any.whl", hash = "sha256:5443e6d93c0b263f4ea309e2ff01312eef7c424dd51981a1e78e960c90e572b8"},
+    {file = "modulegraph-0.19.6.tar.gz", hash = "sha256:c914c8c95a0e10fe88505d4e9c2284b4e3dbc70943e306cc6567e36cc541bf4b"},
+]
+
+[package.dependencies]
+altgraph = ">=0.15"
+setuptools = "*"
 
 [[package]]
 name = "nbclient"
@@ -2240,6 +2314,23 @@ files = [
 tests = ["pytest"]
 
 [[package]]
+name = "py2app"
+version = "0.28.8"
+description = "Create standalone Mac OS X applications with Python"
+optional = false
+python-versions = "*"
+files = [
+    {file = "py2app-0.28.8-py2.py3-none-any.whl", hash = "sha256:38b80f0c91f8d2dddb6396e6bbff8a84875f073c510f4f1a307e8ae44c7d73d8"},
+    {file = "py2app-0.28.8.tar.gz", hash = "sha256:cab7aec752a8b83e7c6cef7c15271dc720155275e44cbf610e3162e0807313ec"},
+]
+
+[package.dependencies]
+altgraph = ">=0.17.3"
+macholib = ">=1.16.2"
+modulegraph = ">=0.19.6"
+packaging = "*"
+
+[[package]]
 name = "pycparser"
 version = "2.22"
 description = "C parser in Python"
@@ -2416,6 +2507,45 @@ files = [
 
 [package.extras]
 windows-terminal = ["colorama (>=0.4.6)"]
+
+[[package]]
+name = "pyobjc-core"
+version = "10.3.2"
+description = "Python<->ObjC Interoperability Module"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pyobjc_core-10.3.2-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:acb40672d682851a5c7fd84e5041c4d069b62076168d72591abb5fcc871bb039"},
+    {file = "pyobjc_core-10.3.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:cea5e77659619ad93c782ca07644b6efe7d7ec6f59e46128843a0a87c1af511a"},
+    {file = "pyobjc_core-10.3.2-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:16644a92fb9661de841ba6115e5354db06a1d193a5e239046e840013c7b3874d"},
+    {file = "pyobjc_core-10.3.2-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:76b8b911d94501dac89821df349b1860bb770dce102a1a293f524b5b09dd9462"},
+    {file = "pyobjc_core-10.3.2-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:8c6288fdb210b64115760a4504efbc4daffdc390d309e9318eb0e3e3b78d2828"},
+    {file = "pyobjc_core-10.3.2-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:87901e9f7032f33eb4fa884e407bf2744d5a0791b379bfca783982a02be3f7fb"},
+    {file = "pyobjc_core-10.3.2-cp38-cp38-macosx_11_0_universal2.whl", hash = "sha256:636971ab48a4198ca129e149fe58ccf85a7b4a9b93d27f5ae920d88eb2655431"},
+    {file = "pyobjc_core-10.3.2-cp39-cp39-macosx_10_9_universal2.whl", hash = "sha256:48e9ac3af42b2340dae709a8b894f5ef7e5132d8546adcd1797cffcc449dabdc"},
+    {file = "pyobjc_core-10.3.2.tar.gz", hash = "sha256:dbf1475d864ce594288ce03e94e3a98dc7f0e4639971eb1e312bdf6661c21e0e"},
+]
+
+[[package]]
+name = "pyobjc-framework-cocoa"
+version = "10.3.2"
+description = "Wrappers for the Cocoa frameworks on macOS"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:61f44c2adab28fdf3aa3d593c9497a2d9ceb9583ed9814adb48828c385d83ff4"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:7caaf8b260e81b27b7b787332846f644b9423bfc1536f6ec24edbde59ab77a87"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:c49e99fc4b9e613fb308651b99d52a8a9ae9916c8ef27aa2f5d585b6678a59bf"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:f1161b5713f9b9934c12649d73a6749617172e240f9431eff9e22175262fdfda"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp313-cp313t-macosx_10_13_universal2.whl", hash = "sha256:08e48b9ee4eb393447b2b781d16663b954bd10a26927df74f92e924c05568d89"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp38-cp38-macosx_10_9_x86_64.whl", hash = "sha256:7faa448d2038ae0e0287a326d390002e744bb6470e45995e2dbd16c892e4495a"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp38-cp38-macosx_11_0_universal2.whl", hash = "sha256:fcd53fee2be9708576617994b107aedc2c40824b648cd51e780e8399c0a447b6"},
+    {file = "pyobjc_framework_Cocoa-10.3.2-cp39-cp39-macosx_10_9_universal2.whl", hash = "sha256:838fcf0d10674bde9ff64a3f20c0e188f2dc5e804476d80509b81c4ac1dabc59"},
+    {file = "pyobjc_framework_cocoa-10.3.2.tar.gz", hash = "sha256:673968e5435845bef969bfe374f31a1a6dc660c98608d2b84d5cae6eafa5c39d"},
+]
+
+[package.dependencies]
+pyobjc-core = ">=10.3.2"
 
 [[package]]
 name = "pyparsing"
@@ -2897,6 +3027,22 @@ files = [
 ]
 
 [[package]]
+name = "rumps"
+version = "0.4.0"
+description = "Ridiculously Uncomplicated MacOS Python Statusbar apps."
+optional = false
+python-versions = "*"
+files = [
+    {file = "rumps-0.4.0.tar.gz", hash = "sha256:17fb33c21b54b1e25db0d71d1d793dc19dc3c0b7d8c79dc6d833d0cffc8b1596"},
+]
+
+[package.dependencies]
+pyobjc-framework-Cocoa = "*"
+
+[package.extras]
+dev = ["pytest (>=4.3)", "pytest-mock (>=2.0.0)", "tox (>=3.8)"]
+
+[[package]]
 name = "send2trash"
 version = "1.8.3"
 description = "Send file to trash natively under Mac OS X, Windows and Linux"
@@ -3080,6 +3226,23 @@ pure-eval = "*"
 tests = ["cython", "littleutils", "pygments", "pytest", "typeguard"]
 
 [[package]]
+name = "starlette"
+version = "0.41.3"
+description = "The little ASGI library that shines."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "starlette-0.41.3-py3-none-any.whl", hash = "sha256:44cedb2b7c77a9de33a8b74b2b90e9f50d11fcf25d8270ea525ad71a25374ff7"},
+    {file = "starlette-0.41.3.tar.gz", hash = "sha256:0e4ab3d16522a255be6b28260b938eae2482f98ce5cc934cb08dce8dc3ba5835"},
+]
+
+[package.dependencies]
+anyio = ">=3.4.0,<5"
+
+[package.extras]
+full = ["httpx (>=0.22.0)", "itsdangerous", "jinja2", "python-multipart (>=0.0.7)", "pyyaml"]
+
+[[package]]
 name = "terminado"
 version = "0.18.1"
 description = "Tornado websocket backend for the Xterm.js Javascript terminal emulator library."
@@ -3232,6 +3395,24 @@ socks = ["pysocks (>=1.5.6,!=1.5.7,<2.0)"]
 zstd = ["zstandard (>=0.18.0)"]
 
 [[package]]
+name = "uvicorn"
+version = "0.34.0"
+description = "The lightning-fast ASGI server."
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "uvicorn-0.34.0-py3-none-any.whl", hash = "sha256:023dc038422502fa28a09c7a30bf2b6991512da7dcdb8fd35fe57cfc154126f4"},
+    {file = "uvicorn-0.34.0.tar.gz", hash = "sha256:404051050cd7e905de2c9a7e61790943440b3416f49cb409f965d9dcd0fa73e9"},
+]
+
+[package.dependencies]
+click = ">=7.0"
+h11 = ">=0.8"
+
+[package.extras]
+standard = ["colorama (>=0.4)", "httptools (>=0.6.3)", "python-dotenv (>=0.13)", "pyyaml (>=5.1)", "uvloop (>=0.14.0,!=0.15.0,!=0.15.1)", "watchfiles (>=0.13)", "websockets (>=10.4)"]
+
+[[package]]
 name = "wcwidth"
 version = "0.2.13"
 description = "Measures the displayed width of unicode strings in a terminal"
@@ -3294,4 +3475,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.12,<4.0"
-content-hash = "9bbc270f5dda5dc982f7b4492c3dd096f28a5cab71c7965c3d73a9af8a8e907a"
+content-hash = "9f8ee20b2ca7ab193da5a4fcacdbdd5c7eff36a229adcb24733d9019fa78509f"
