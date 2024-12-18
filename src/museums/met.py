@@ -16,7 +16,6 @@ from requests.sessions import Session as Session
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..config import settings
 from ..download.progress_tracker import ProgressState, BaseProgressTracker
-# from ..log_level import log_level
 from .schemas import ArtworkMetadata, MuseumInfo, MetArtworkFactory
 from ..utils import sanitize_filename, setup_logging
 
@@ -29,14 +28,14 @@ class MetClient(MuseumAPIClient):
         self.progress_tracker = progress_tracker
         self.object_ids_cache_file = Path(cache_file).parent / 'object_ids_cache.json' if cache_file else None
         self.artwork_factory = MetArtworkFactory()
-        self.logger = setup_logging(settings.logs_dir, log_level, 'met')
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'met')
     
     def _get_auth_header(self) -> str:
         '''Met does not require authentication'''
         return ""
 
     def _get_session(self) -> requests.Session: 
-        self.logger = setup_logging(settings.logs_dir, log_level, 'met')
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'met')
         self.logger.debug("Creating Met-specific session with custom retry strategy")
         session = super()._create_session()
         
@@ -239,7 +238,7 @@ class MetImageProcessor(MuseumImageProcessor):
     
     def __init__(self, output_dir: Path, museum_info: MuseumInfo):
         super().__init__(output_dir, museum_info)
-        self.logger = setup_logging(settings.logs_dir, log_level, 'met')
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'met')
     
     def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path: 
         '''Process and save artwork image'''
@@ -282,7 +281,7 @@ class MetProgressState(ProgressState):
 
 class MetProgressTracker(BaseProgressTracker):
     def __init__(self, progress_file: Path):
-        self.logger = setup_logging(settings.logs_dir, log_level, 'met')
+        self.logger = setup_logging(settings.logs_dir, settings.log_level, 'met')
         self.logger.debug(f"Initializing Met progress tracker with file: {progress_file}")
         self.state = MetProgressState()
         super().__init__(progress_file)
