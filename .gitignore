@@ -67,3 +67,6 @@ dist/
 __pycache__/
 .pytest_cache/
 poetry.lock.env
+
+#Any generated images
+*.png

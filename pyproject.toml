@@ -20,6 +20,7 @@ fastapi = "^0.115.6"
 uvicorn = "^0.34.0"
 rumps = "^0.4.0"
 py2app = "^0.28.8"
+shapely = "^2.0.6"
 
 [tool.poetry.group.dev.dependencies]
 ipython = "^8.29.0"
