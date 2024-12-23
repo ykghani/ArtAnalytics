@@ -9,9 +9,10 @@ import tempfile
 import os
 import time
 from datetime import datetime
+import sys
 
 from src.utils import setup_logging
-
+from src.log_level import LogLevel
 
 
 # Constants
@@ -21,7 +22,13 @@ LOG_PATH = PROJECT_ROOT / 'data' / 'logs'
 DB_PATH = PROJECT_ROOT / "data" / "artwork.db"
 
 logger = setup_logging(log_dir= LOG_PATH,
-                       log_level= 'debug')
+                       log_level= LogLevel.DEBUG,
+                       museum_code= 'wallpaper')
+
+logger.debug(f"Script started at: {datetime.now()}")
+logger.debug(f"Python executable: {sys.executable}")
+logger.debug(f"Working directory: {os.getcwd()}")
+logger.debug(f"DISPLAY env var: {os.environ.get('DISPLAY')}")
 
 def calculate_text_dimensions(metadata: dict, font_title, font_info, max_width: int) -> tuple[int, int]:
     """

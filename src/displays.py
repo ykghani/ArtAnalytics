@@ -31,8 +31,8 @@ class DisplayRatios:
     def pad_image_for_display(
         image: Image.Image, 
         metadata: Optional['ArtworkMetadata'] = None,
-        max_width: int = 3456,  # MacBook Pro 16" width
-        max_height: int = 2234,  # MacBook Pro 16" height
+        max_width: int = 3024,  # MacBook Pro 16" width
+        max_height: int = 1964,  # MacBook Pro 16" height
         target_aspect_ratio: float = 1.6,
         background_color: Tuple[int, int, int] = (255, 255, 255),
         text_color: Tuple[int, int, int] = (0, 0, 0),
