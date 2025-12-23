@@ -1,38 +1,55 @@
-[tool.poetry]
-name = "artserve"
+[project]
+name = "artserve-downloader"
 version = "0.1.0"
 description = "Art museum API integration and artwork downloader"
-authors = ["Yusuf Ghani <yusuf.k.ghani@gmail.com>"]
+authors = [{name = "Yusuf Ghani", email = "yusuf.k.ghani@gmail.com"}]
 readme = "README.md"
-packages = [{include = "src"}]
+requires-python = ">=3.12"
 
-[tool.poetry.dependencies]
-python = ">=3.12,<4.0"
-requests = "^2.32.3"
-pillow = "^11.0.0"
-pydantic = {extras = ["email"], version = "^2.0.0"} 
-pydantic-settings = "^2.0.0"
-python-dotenv = "^0.21.0"
-requests-cache = "^1.2.1"
-sqlalchemy = "^2.0.36"
-alembic = "^1.14.0"
-fastapi = "^0.115.6"
-uvicorn = "^0.34.0"
-rumps = "^0.4.0"
-py2app = "^0.28.8"
-shapely = "^2.0.6"
+dependencies = [
+    # HTTP & API
+    "requests>=2.32.3",
+    "requests-cache>=1.2.1",
 
-[tool.poetry.group.dev.dependencies]
-ipython = "^8.29.0"
-ipykernel = "^6.29.5"
-jupyter = "^1.0.0"
-matplotlib = "^3.9.2"
-pandas = "^2.2.3"
-numpy = "^2.1.2"
+    # Database
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+
+    # Image processing
+    "pillow>=11.0.0",
+    "shapely>=2.0.6",
+
+    # API (for local testing)
+    "fastapi>=0.115.6",
+    "uvicorn>=0.34.0",
+
+    # Config & validation
+    "pydantic[email]>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "python-dotenv>=0.21.0",
+
+    # MacOS (for wallpaper script)
+    "rumps>=0.4.0",
+    "py2app>=0.28.8",
+]
+
+[tool.uv]
+dev-dependencies = [
+    # Data analysis & exploration
+    "ipython>=8.29.0",
+    "ipykernel>=6.29.5",
+    "jupyter>=1.0.0",
+    "matplotlib>=3.9.2",
+    "pandas>=2.2.3",
+    "numpy>=2.1.2",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.poetry.scripts]
-start = "main:main"
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[project.scripts]
+artserve-download = "main:main"

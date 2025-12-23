@@ -160,9 +160,11 @@ class AICArtworkFactory(ArtworkMetadataFactory):
             if image_id:
                 base_url = "https://www.artic.edu/iiif/2"
                 image_urls = {
-                    'web': f"{base_url}/{image_id}/full/843,/0/default.jpg",  
+                    'web': f"{base_url}/{image_id}/full/843,/0/default.jpg",
                     'print': f"{base_url}/{image_id}/full/,1686/0/default.jpg",  # Scale by height
-                    'full': f"{base_url}/{image_id}/full/max/0/default.jpg"  # Get native size
+                    'full': f"{base_url}/{image_id}/full/max/0/default.jpg",  # Get native size
+                    'macbook_16': f"{base_url}/{image_id}/full/3456,/0/default.jpg",  # MacBook Pro 16" width
+                    'macbook_14': f"{base_url}/{image_id}/full/3024,/0/default.jpg",  # MacBook Pro 14" width
                 }
             
             return ArtworkMetadata(
