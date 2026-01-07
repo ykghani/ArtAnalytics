@@ -19,7 +19,7 @@ from src.log_level import LogLevel
 # Constants
 SCRIPT_DIR = Path(__file__).parent
 PROJECT_ROOT = SCRIPT_DIR.parent
-LOG_PATH = PROJECT_ROOT / 'data' / 'logs'
+LOG_PATH = PROJECT_ROOT / "data" / "logs"
 DB_PATH = PROJECT_ROOT / "data" / "artwork.db"
 
 # Display settings for MacBook Pro 14" (3456×2234)
@@ -27,16 +27,19 @@ DISPLAY_WIDTH = 3024
 DISPLAY_HEIGHT = 1964
 TEXT_AREA_HEIGHT = 120  # Reserved space for metadata text
 
-logger = setup_logging(log_dir= LOG_PATH,
-                       log_level= LogLevel.DEBUG,
-                       museum_code= 'wallpaper')
+logger = setup_logging(
+    log_dir=LOG_PATH, log_level=LogLevel.DEBUG, museum_code="wallpaper"
+)
 
 logger.debug(f"Script started at: {datetime.now()}")
 logger.debug(f"Python executable: {sys.executable}")
 logger.debug(f"Working directory: {os.getcwd()}")
 logger.debug(f"DISPLAY env var: {os.environ.get('DISPLAY')}")
 
-def build_iiif_url(image_id: str, width: Optional[int] = None, height: Optional[int] = None) -> str:
+
+def build_iiif_url(
+    image_id: str, width: Optional[int] = None, height: Optional[int] = None
+) -> str:
     """
     Build IIIF Image API URL for AIC artwork.
 
@@ -70,35 +73,44 @@ def build_iiif_url(image_id: str, width: Optional[int] = None, height: Optional[
 
     return f"{base_url}/{image_id}/full/{size}/0/default.jpg"
 
-def calculate_text_dimensions(metadata: dict, font_title, font_info, max_width: int) -> tuple[int, int]:
+
+def calculate_text_dimensions(
+    metadata: dict, font_title, font_info, max_width: int
+) -> tuple[int, int]:
     """
     Calculate required text box dimensions.
-    
+
     Returns:
         Tuple of (width, height) in pixels
     """
     # Create temporary image for text measurements
-    temp_draw = ImageDraw.Draw(Image.new('RGB', (1, 1)))
+    temp_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     padding = 20
     line_spacing = 10
-    
+
     # Safely get and wrap text, defaulting to empty string
-    title = textwrap.fill(str(metadata.get('title') or ''), width=40)
-    artist = textwrap.fill(str(metadata.get('artist_display') or 
-                             metadata.get('artist') or ''), width=50)
-    
+    title = textwrap.fill(str(metadata.get("title") or ""), width=40)
+    artist = textwrap.fill(
+        str(metadata.get("artist_display") or metadata.get("artist") or ""), width=50
+    )
+
     # Get text bounding boxes
     title_bbox = temp_draw.textbbox((0, 0), title, font=font_title)
     artist_bbox = temp_draw.textbbox((0, 0), artist, font=font_info)
-    
+
     # Calculate total dimensions
     total_width = max(title_bbox[2], artist_bbox[2]) + (padding * 2)
-    total_height = (title_bbox[3] + artist_bbox[3] + line_spacing + (padding * 2))
-    
+    total_height = title_bbox[3] + artist_bbox[3] + line_spacing + (padding * 2)
+
     return total_width, total_height
 
-def prepare_wallpaper(image: Image.Image, metadata: dict, target_width: int = DISPLAY_WIDTH,
-                      target_height: int = DISPLAY_HEIGHT) -> Image.Image:
+
+def prepare_wallpaper(
+    image: Image.Image,
+    metadata: dict,
+    target_width: int = DISPLAY_WIDTH,
+    target_height: int = DISPLAY_HEIGHT,
+) -> Image.Image:
     """
     Prepare image with metadata for wallpaper display.
 
@@ -151,10 +163,12 @@ def prepare_wallpaper(image: Image.Image, metadata: dict, target_width: int = DI
         # Scale up for better visibility (using high-quality resampling)
         image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-    logger.debug(f"Final image size: {image.width}x{image.height} (available: {target_width}x{artwork_height})")
+    logger.debug(
+        f"Final image size: {image.width}x{image.height} (available: {target_width}x{artwork_height})"
+    )
 
     # Create canvas at exact display dimensions
-    wallpaper = Image.new('RGB', (target_width, target_height), (0, 0, 0))
+    wallpaper = Image.new("RGB", (target_width, target_height), (0, 0, 0))
 
     # Center image both horizontally and vertically in artwork area
     # This avoids the notch and keeps artwork in the "safe zone"
@@ -170,20 +184,23 @@ def prepare_wallpaper(image: Image.Image, metadata: dict, target_width: int = DI
     text_y = artwork_height + padding
 
     # Draw title
-    if metadata.get('title'):
-        title = textwrap.fill(metadata['title'], width=60)
+    if metadata.get("title"):
+        title = textwrap.fill(metadata["title"], width=60)
         draw.text((padding, text_y), title, font=font_title, fill=(255, 255, 255))
         title_bbox = draw.textbbox((padding, text_y), title, font=font_title)
         text_y = title_bbox[3] + 8
 
     # Draw artist
-    if metadata.get('artist_display'):
-        artist = textwrap.fill(metadata['artist_display'], width=70)
+    if metadata.get("artist_display"):
+        artist = textwrap.fill(metadata["artist_display"], width=70)
         draw.text((padding, text_y), artist, font=font_info, fill=(200, 200, 200))
 
     return wallpaper
 
-def get_random_artwork(db_path: Path) -> Tuple[Optional[str], Optional[dict], Optional[str]]:
+
+def get_random_artwork(
+    db_path: Path,
+) -> Tuple[Optional[str], Optional[dict], Optional[str]]:
     """
     Get random artwork from database with IIIF support.
 
@@ -197,39 +214,47 @@ def get_random_artwork(db_path: Path) -> Tuple[Optional[str], Optional[dict], Op
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
             # Get artwork with image_urls JSON field
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT image_path, title, artist, artist_display, description, image_urls, original_id
                 FROM artworks
                 WHERE image_path IS NOT NULL
                 ORDER BY RANDOM()
                 LIMIT 1
-            """)
+            """
+            )
             result = cursor.fetchone()
             if result:
                 # Extract image_id from IIIF URL in image_urls JSON
                 image_id = None
                 if result[5]:  # image_urls field
                     import json
+
                     try:
                         image_urls = json.loads(result[5])
                         # Extract image_id from any IIIF URL (e.g., "https://www.artic.edu/iiif/2/{image_id}/full/...")
                         for url in image_urls.values():
-                            if 'artic.edu/iiif/2/' in url:
-                                image_id = url.split('/iiif/2/')[1].split('/')[0]
+                            if "artic.edu/iiif/2/" in url:
+                                image_id = url.split("/iiif/2/")[1].split("/")[0]
                                 break
                     except (json.JSONDecodeError, IndexError, AttributeError):
                         logger.debug("Could not extract image_id from image_urls")
 
-                return result[0], {
-                    'title': result[1],
-                    'artist': result[2],
-                    'artist_display': result[3],
-                    'description': result[4]
-                }, image_id
+                return (
+                    result[0],
+                    {
+                        "title": result[1],
+                        "artist": result[2],
+                        "artist_display": result[3],
+                        "description": result[4],
+                    },
+                    image_id,
+                )
             return None, None, None
     except sqlite3.Error as e:
         logger.error(f"Database error: {e}")
         return None, None, None
+
 
 def set_wallpaper(image_path: str) -> bool:
     """Set macOS wallpaper using osascript with enhanced error checking."""
@@ -240,29 +265,29 @@ def set_wallpaper(image_path: str) -> bool:
             return False
 
         # Construct the AppleScript command
-        script = f'''tell application "System Events"
+        script = f"""tell application "System Events"
             tell every desktop
                 set picture to "{image_path}"
             end tell
-        end tell'''
-        
+        end tell"""
+
         # Run the command and capture output
         result = subprocess.run(
-            ['osascript', '-e', script],
+            ["osascript", "-e", script],
             capture_output=True,
             text=True,
-            check=False  # Don't raise exception on non-zero exit
+            check=False,  # Don't raise exception on non-zero exit
         )
-        
+
         # Log detailed output
         if result.returncode != 0:
             logger.error(f"osascript failed with return code {result.returncode}")
             logger.error(f"Error output: {result.stderr}")
             return False
-            
+
         if result.stdout:
             logger.debug(f"osascript output: {result.stdout}")
-            
+
         return True
 
     except subprocess.SubprocessError as e:
@@ -271,6 +296,7 @@ def set_wallpaper(image_path: str) -> bool:
     except Exception as e:
         logger.error(f"Unexpected error setting wallpaper: {str(e)}")
         return False
+
 
 def load_image_from_iiif(image_id: str, width: int) -> Optional[Image.Image]:
     """
@@ -292,17 +318,23 @@ def load_image_from_iiif(image_id: str, width: int) -> Optional[Image.Image]:
 
         # Check if image is too small (IIIF returns smaller if source is unavailable at requested size)
         from io import BytesIO
+
         img = Image.open(BytesIO(response.content))
-        logger.info(f"Downloaded image: {img.width}x{img.height} (requested width: {width})")
+        logger.info(
+            f"Downloaded image: {img.width}x{img.height} (requested width: {width})"
+        )
 
         # Warn if significantly smaller than requested
         if img.width < width * 0.7:
-            logger.warning(f"Downloaded image is smaller than requested: {img.width}px vs {width}px")
+            logger.warning(
+                f"Downloaded image is smaller than requested: {img.width}px vs {width}px"
+            )
 
         return img
     except Exception as e:
         logger.error(f"Failed to load image from IIIF: {e}")
         return None
+
 
 def main():
     start_time = time.time()
@@ -318,12 +350,14 @@ def main():
         logger.error("No valid artwork found in database")
         return
 
-    logger.info(f"Selected artwork: {metadata.get('title', 'Unknown')} by {metadata.get('artist', 'Unknown')}")
+    logger.info(
+        f"Selected artwork: {metadata.get('title', 'Unknown')} by {metadata.get('artist', 'Unknown')}"
+    )
 
     temp_path = None
     try:
         # Create temporary file
-        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
             temp_path = tmp_file.name
             logger.debug(f"Created temporary file: {temp_path}")
 
@@ -339,7 +373,7 @@ def main():
 
             # Process and save wallpaper
             processed = prepare_wallpaper(img, metadata)
-            processed.save(temp_path, 'JPEG', quality=95)
+            processed.save(temp_path, "JPEG", quality=95)
             img.close()
 
             # Verify temp file exists and is readable
@@ -356,13 +390,16 @@ def main():
 
             # Set wallpaper
             if set_wallpaper(temp_path):
-                logger.info(f"Successfully set wallpaper: {metadata.get('title', 'Unknown')}")
+                logger.info(
+                    f"Successfully set wallpaper: {metadata.get('title', 'Unknown')}"
+                )
             else:
                 logger.error("Failed to set wallpaper")
 
     except Exception as e:
         logger.error(f"Error processing wallpaper: {e}")
         import traceback
+
         logger.debug(traceback.format_exc())
     finally:
         # Clean up temporary file after a delay
@@ -378,6 +415,7 @@ def main():
     end_time = time.time()
     duration = end_time - start_time
     logger.info(f"Wallpaper change completed in {duration:.2f} seconds")
+
 
 if __name__ == "__main__":
     main()

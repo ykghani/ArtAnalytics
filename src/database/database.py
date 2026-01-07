@@ -6,31 +6,33 @@ from pathlib import Path
 
 from .models import Base
 
+
 class Database:
     def __init__(self, db_path: Path):
-        self.engine = create_engine(f'sqlite:///{db_path}', echo=False)
+        self.engine = create_engine(f"sqlite:///{db_path}", echo=False)
         self._SessionFactory = sessionmaker(bind=self.engine)
-        
+
     def create_tables(self):
         """Create all tables in the database"""
         Base.metadata.create_all(self.engine)
-        
+
     def get_session(self) -> Session:
         """Get a new database session"""
         return self._SessionFactory()
-        
+
     def init_museums(self, session: Session):
         """Initialize museum entries if they don't exist"""
         from .models import Museum
+
         museums = [
-            {'code': 'met', 'name': 'Metropolitan Museum of Art'},
-            {'code': 'aic', 'name': 'Art Institute of Chicago'},
-            {'code': 'cma', 'name': 'Cleveland Museum of Art'}
+            {"code": "met", "name": "Metropolitan Museum of Art"},
+            {"code": "aic", "name": "Art Institute of Chicago"},
+            {"code": "cma", "name": "Cleveland Museum of Art"},
         ]
-        
+
         for museum_data in museums:
-            if not session.query(Museum).filter_by(code=museum_data['code']).first():
+            if not session.query(Museum).filter_by(code=museum_data["code"]).first():
                 museum = Museum(**museum_data)
                 session.add(museum)
-        
+
         session.commit()

@@ -10,73 +10,78 @@ import requests_cache
 from .schemas import ArtworkMetadata, MuseumInfo
 from ..utils import sanitize_filename
 
-class MuseumAPIClient(ABC): 
-    '''Abstract base class for museum API clients'''
-    
-    def __init__(self, museum_info: MuseumInfo, api_key: Optional[str] = None, cache_file: Optional[Path] = None):
+
+class MuseumAPIClient(ABC):
+    """Abstract base class for museum API clients"""
+
+    def __init__(
+        self,
+        museum_info: MuseumInfo,
+        api_key: Optional[str] = None,
+        cache_file: Optional[Path] = None,
+    ):
         self.museum_info = museum_info
         self.api_key = api_key
         self.session = self._create_session()
-        
+
         if cache_file:
             import requests_cache
-            requests_cache.install_cache(str(cache_file), backend= 'sqlite')
-    
-    def _create_session(self) -> requests.Session: 
-        '''Create a configured requests session with retry logic'''
+
+            requests_cache.install_cache(str(cache_file), backend="sqlite")
+
+    def _create_session(self) -> requests.Session:
+        """Create a configured requests session with retry logic"""
         session = requests.Session()
-        
+
         headers = {}
         if self.museum_info.user_agent:
-            headers['User-Agent'] = self.museum_info.user_agent
-        
-        if self.api_key: 
-            headers['Authorization'] = self._get_auth_header()
-            
+            headers["User-Agent"] = self.museum_info.user_agent
+
+        if self.api_key:
+            headers["Authorization"] = self._get_auth_header()
+
         session.headers.update(headers)
-        
+
         # Retry configuration
         retry_strategy = Retry(
-            total=5, 
-            backoff_factor=1, 
-            status_forcelist=[429, 500, 502, 503, 504]
+            total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504]
         )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
-        
+
         return session
 
     @abstractmethod
-    def _get_auth_header(self) -> str: 
-        '''Return authentication header value'''
+    def _get_auth_header(self) -> str:
+        """Return authentication header value"""
         pass
-    
+
     def iter_collection(self, **params) -> Iterator[ArtworkMetadata]:
-        '''
+        """
         Main interface for iterating through a museum's collection.
         Each museum client implements its own _iter_collection_impl method.
-        '''
+        """
         try:
             yield from self._iter_collection_impl(**params)
         except Exception as e:
             logging.error(f"Error iterating through collection: {e}")
             return
-    
+
     @abstractmethod
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        '''Implementation specific to each museum API'''
+        """Implementation specific to each museum API"""
         pass
-    
+
     @abstractmethod
     def get_collection_info(self) -> Dict[str, Any]:
-        pass 
-    
+        pass
+
     def get_artwork_details(self, artwork_id: str) -> ArtworkMetadata:
-        '''
+        """
         Get detailed info for a specific artwork.
         This could be overridden if needed but provides a common implementation.
-        '''
+        """
         try:
             return self._get_artwork_details_impl(artwork_id)
         except Exception as e:
@@ -85,26 +90,27 @@ class MuseumAPIClient(ABC):
 
     @abstractmethod
     def _get_artwork_details_impl(self, artwork_id: str) -> ArtworkMetadata:
-        '''Implementation specific to each museum API'''
+        """Implementation specific to each museum API"""
         pass
 
-class MuseumImageProcessor(ABC): 
-    '''ABC for processing museum images'''
-    
-    def __init__(self, output_dir: Path, museum_info: MuseumInfo): 
+
+class MuseumImageProcessor(ABC):
+    """ABC for processing museum images"""
+
+    def __init__(self, output_dir: Path, museum_info: MuseumInfo):
         self.output_dir = output_dir
         self.museum_info = museum_info
         self._ensure_output_dir()
-    
+
     def _ensure_output_dir(self) -> None:
-        '''Ensure output directory exists'''
+        """Ensure output directory exists"""
         self.output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     @abstractmethod
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path: 
-        '''Process and save image, return path to saved file'''
+    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
+        """Process and save image, return path to saved file"""
         pass
-    
+
     @abstractmethod
-    def generate_filename(self, metadata: ArtworkMetadata) -> str: 
-        pass 
+    def generate_filename(self, metadata: ArtworkMetadata) -> str:
+        pass

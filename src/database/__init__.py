@@ -13,10 +13,10 @@ Key Components:
 
 Example:
     from src.database import Database, ArtworkRepository
-    
+
     db = Database(settings.database_path)
     db.create_tables()
-    
+
     with db.get_session() as session:
         repo = ArtworkRepository(session)
         artwork = repo.get_artwork('met', '123456')
@@ -26,6 +26,6 @@ from .database import Database
 from .repository import ArtworkRepository
 from .models import Museum, Artwork, Base
 
-__all__ = ['Database', 'Base', 'Museum', 'Artwork', 'ArtworkRepository']
+__all__ = ["Database", "Base", "Museum", "Artwork", "ArtworkRepository"]
 
-__version__ = '0.1.0'
+__version__ = "0.1.0"
