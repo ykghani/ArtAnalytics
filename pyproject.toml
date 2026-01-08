@@ -19,6 +19,9 @@ dependencies = [
     "pillow>=11.0.0",
     "shapely>=2.0.6",
 
+    # JSON streaming (for large files)
+    "ijson>=3.2.0",
+
     # API (for local testing)
     "fastapi>=0.115.6",
     "uvicorn>=0.34.0",

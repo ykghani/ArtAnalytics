@@ -73,8 +73,19 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
             yield from self._iter_api_collection_impl(**params)
 
     def _iter_data_dump(self) -> Iterator[ArtworkMetadata]:
-        """Iterate through data dump file"""
+        """
+        Iterate through data dump file using streaming parser.
+
+        Uses ijson for incremental parsing to avoid loading 295MB file into memory.
+        """
         try:
+            import ijson
+        except ImportError:
+            self.logger.error(
+                "ijson not installed. Install with: pip install ijson\n"
+                "Falling back to standard json.load (high memory usage)"
+            )
+            # Fallback to old method if ijson not available
             with open(self.data_dump_path) as f:
                 artworks = json.load(f)
 
@@ -94,13 +105,42 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                     if metadata and metadata.is_public_domain:
                         if isinstance(self.progress_tracker, CMAProgressTracker):
                             self.progress_tracker.state.last_processed_index = idx
-                            self.progress_tracker._save_progress()
                         yield metadata
                 except Exception as e:
-                    self.logger.error(
-                        f"Error processing artwork {artwork.get('id')} at index {idx}: {e}"
-                    )
-                    continue
+                    self.logger.error(f"Error processing artwork at index {idx}: {e}")
+            return
+
+        # Stream JSON using ijson (memory-efficient)
+        try:
+            start_index = 0
+            if isinstance(self.progress_tracker, CMAProgressTracker):
+                start_index = getattr(
+                    self.progress_tracker.state, "last_processed_index", 0
+                )
+
+            self.logger.info(f"Streaming JSON from {self.data_dump_path} (starting at index {start_index})")
+
+            with open(self.data_dump_path, 'rb') as f:
+                # Stream array items from root level
+                idx = 0
+                for artwork in ijson.items(f, 'item'):
+                    if idx < start_index:
+                        idx += 1
+                        continue
+
+                    try:
+                        metadata = self.artwork_factory.create_metadata(artwork)
+                        if metadata and metadata.is_public_domain:
+                            if isinstance(self.progress_tracker, CMAProgressTracker):
+                                self.progress_tracker.state.last_processed_index = idx
+                            yield metadata
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error processing artwork {artwork.get('id', 'unknown')} at index {idx}: {e}"
+                        )
+                        continue
+                    finally:
+                        idx += 1
 
         except Exception as e:
             self.logger.error(f"Error reading data dump: {e}")

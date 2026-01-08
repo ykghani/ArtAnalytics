@@ -229,6 +229,11 @@ class Settings(BaseSettings):
     max_retries: int = Field(default=5, env="MAX_RETRIES")
     max_downloads: Optional[int] = None
     max_storage_gb: Optional[float] = None
+    download_images: bool = Field(
+        default=False,
+        env="DOWNLOAD_IMAGES",
+        description="Whether to download images (False = metadata only)",
+    )
 
     def initialize_paths(self, project_root: Path) -> None:
         """Initialize path configurations based on project root."""

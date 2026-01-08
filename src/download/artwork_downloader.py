@@ -30,6 +30,7 @@ class ArtworkDownloader:
         self.client = client
         self.image_processor = image_processor
         self.progress_tracker = progress_tracker
+        self.settings = settings
         self.logger = setup_logging(settings.logs_dir, settings.log_level, None)
         self.rate_limit_delay = (
             1 / settings.rate_limit_delay if settings.rate_limit_delay > 0 else 1.0
@@ -48,11 +49,11 @@ class ArtworkDownloader:
         self._download_count = 0
         self._total_size_bytes = 0
 
+        # Initialize database and museums (one-time setup)
         self.db = Database(settings.database_path)
         self.db.create_tables()
-        session = self.db.get_session()
-        self.db.init_museums(session)
-        self.artwork_repo = ArtworkRepository(session)
+        with self.db.session_scope() as session:
+            self.db.init_museums(session)
 
     def _check_limits(self, new_size_bytes: int = 0) -> bool:
         """Check if downloading another image would exceed capacity limits."""
@@ -179,57 +180,170 @@ class ArtworkDownloader:
         self._total_size_bytes += size_bytes
 
     def download_collection(self, params: Dict[str, Any]) -> None:
-        """Download all artwork matching the given parameters."""
+        """Download all artwork matching the given parameters with batched commits."""
         self.logger.progress(
             f"Starting collection download for {self.client.museum_info.name}"
         )
         consecutive_errors = 0
         max_consecutive_errors = 10
 
+        # Batch processing buffers
+        batch_buffer = []
+        download_images = getattr(self.settings, 'download_images', True)  # Default True for backward compatibility
+
         try:
             artwork_iterator = self.client.iter_collection(**params)
 
-            while True:
-                try:
-                    artwork = next(artwork_iterator, None)
-                    if artwork is None:
-                        self.logger.progress("Reached end of collection")
-                        break
+            with self.db.session_scope() as session:
+                artwork_repo = ArtworkRepository(session)
 
-                    if self.progress_tracker.is_processed(artwork.id):
-                        self.logger.debug(f"Skipping processed art ID: {artwork.id}")
-                        continue
-
+                while True:
                     try:
-                        self.download_artwork(artwork)
-                        consecutive_errors = 0
-                    except requests.exceptions.HTTPError as e:
+                        artwork = next(artwork_iterator, None)
+                        if artwork is None:
+                            # Process remaining batch before ending
+                            if batch_buffer:
+                                self._process_batch(artwork_repo, batch_buffer, download_images)
+                                batch_buffer.clear()
+                            self.logger.progress("Reached end of collection")
+                            break
+
+                        if self.progress_tracker.is_processed(artwork.id):
+                            self.logger.debug(f"Skipping processed art ID: {artwork.id}")
+                            continue
+
+                        try:
+                            # Prepare artwork for batching
+                            result = self._prepare_artwork(artwork, download_images)
+                            if result:
+                                batch_buffer.append(result)
+                                consecutive_errors = 0
+
+                                # Process batch when it reaches batch_size
+                                if len(batch_buffer) >= self.batch_size:
+                                    self._process_batch(artwork_repo, batch_buffer, download_images)
+                                    batch_buffer.clear()
+
+                        except requests.exceptions.HTTPError as e:
+                            consecutive_errors += 1
+                            self.logger.error(
+                                f"HTTP Error downloading artwork {artwork.id}: {str(e)}"
+                            )
+
+                            if consecutive_errors >= max_consecutive_errors:
+                                self.logger.error("Exceeded max consecutive errors")
+                                break
+
+                            time.sleep(self.error_rate_delay)
+
+                    except Exception as e:
                         consecutive_errors += 1
-                        self.logger.error(
-                            f"HTTP Error downloading artwork {artwork.id}: {str(e)}"
-                        )
+                        self.logger.error(f"Error in main download loop: {e}")
 
                         if consecutive_errors >= max_consecutive_errors:
-                            self.logger.error("Exceeded max consecutive errors")
+                            self.logger.error(
+                                "Too many consecutive errors, stopping download"
+                            )
                             break
 
                         time.sleep(self.error_rate_delay)
 
-                except Exception as e:
-                    consecutive_errors += 1
-                    self.logger.error(f"Error in main download loop: {e}")
-
-                    if consecutive_errors >= max_consecutive_errors:
-                        self.logger.error(
-                            "Too many consecutive errors, stopping download"
-                        )
-                        break
-
-                    time.sleep(self.error_rate_delay)
-
         finally:
+            # Force save any pending progress
+            self.progress_tracker.force_save()
+
             summary = self._generate_summary_report()
             self._log_summary(summary)
+
+    def _prepare_artwork(
+        self,
+        artwork_metadata: ArtworkMetadata,
+        download_images: bool
+    ) -> Optional[tuple[ArtworkMetadata, str, Optional[str]]]:
+        """
+        Prepare artwork for batch processing.
+
+        Returns:
+            Tuple of (metadata, museum_code, image_path) if successful, None otherwise
+        """
+        try:
+            artwork_info = f"{self.client.museum_info.name} ID: {artwork_metadata.id} '{artwork_metadata.title}' by '{artwork_metadata.artist}"
+
+            # Filter: Public domain check
+            if not artwork_metadata.is_public_domain:
+                self.logger.debug("Skipping non-public domain artwork")
+                self.progress_tracker.log_status(
+                    artwork_metadata.id, "skipped", "Not public domain"
+                )
+                return None
+
+            image_path = None
+            if download_images:
+                # Download and process image if enabled
+                if image_data := self._get_image_data(artwork_metadata):
+                    image_size = len(image_data)
+                    if not self._check_limits(image_size):
+                        self.logger.progress("Download limits reached")
+                        self.progress_tracker.log_status(
+                            artwork_metadata.id, "skipped", "Download limits reached"
+                        )
+                        return None
+
+                    image_path = str(self.image_processor.process_image(
+                        image_data, artwork_metadata
+                    ))
+                    self._update_download_stats(image_size)
+                else:
+                    self.logger.debug(f"No image available for {artwork_info}")
+                    self.progress_tracker.log_status(
+                        artwork_metadata.id, "skipped", "No image available"
+                    )
+                    return None
+
+            self.progress_tracker.log_status(artwork_metadata.id, "success")
+            self.logger.artwork(f"Prepared artwork for batch: {artwork_info}")
+
+            return (artwork_metadata, self.client.museum_info.code, image_path)
+
+        except Exception as e:
+            error_msg = f"Failed to prepare {artwork_metadata.id}: {str(e)}"
+            self.logger.error(error_msg)
+            self._handle_error(artwork_metadata.id, str(e))
+            return None
+
+    def _process_batch(
+        self,
+        artwork_repo: ArtworkRepository,
+        batch_buffer: List[tuple[ArtworkMetadata, str, Optional[str]]],
+        download_images: bool
+    ) -> None:
+        """Process a batch of artworks with a single database commit."""
+        if not batch_buffer:
+            return
+
+        try:
+            self.logger.progress(f"Processing batch of {len(batch_buffer)} artworks...")
+            artwork_repo.bulk_create_or_update(batch_buffer, commit=True)
+            self.logger.progress(f"Successfully committed batch of {len(batch_buffer)} artworks")
+
+            # Update progress tracker (batch write)
+            for metadata, _, _ in batch_buffer:
+                self.progress_tracker.log_status(metadata.id, "success")
+
+        except Exception as e:
+            self.logger.error(f"Failed to process batch: {e}")
+            # Try to process individually as fallback
+            self.logger.progress("Attempting individual processing as fallback...")
+            for metadata, museum_code, image_path in batch_buffer:
+                try:
+                    artwork_repo.create_or_update_artwork(
+                        metadata=metadata,
+                        museum_code=museum_code,
+                        image_path=image_path
+                    )
+                except Exception as individual_error:
+                    self.logger.error(f"Failed to process {metadata.id}: {individual_error}")
+                    self._handle_error(metadata.id, str(individual_error))
 
     def _process_page(self, artworks: List[Dict[str, Any]]) -> None:
         """Process a page of artwork data."""

@@ -3,6 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from typing import Optional
 from pathlib import Path
+from contextlib import contextmanager
 
 from .models import Base
 
@@ -19,6 +20,27 @@ class Database:
     def get_session(self) -> Session:
         """Get a new database session"""
         return self._SessionFactory()
+
+    @contextmanager
+    def session_scope(self):
+        """
+        Provide a transactional scope around a series of operations.
+
+        Usage:
+            with db.session_scope() as session:
+                # do work
+                pass
+            # session automatically committed and closed
+        """
+        session = self._SessionFactory()
+        try:
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def init_museums(self, session: Session):
         """Initialize museum entries if they don't exist"""
