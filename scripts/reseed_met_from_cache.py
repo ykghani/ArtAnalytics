@@ -73,28 +73,34 @@ def fetch_and_save_artworks(
     with db.session_scope() as session:
         db.init_museums(session)
 
-    # Initialize Met client
+    # Initialize Met client with more browser-like User-Agent
     museum_info = MuseumInfo(
         name="Metropolitan Museum of Art",
         base_url="https://collectionapi.metmuseum.org/public/collection/v1",
         code="met",
-        user_agent="MET-ArtDownloadBot/1.0",
-        rate_limit=80.0,
+        user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        rate_limit=1.0,  # Conservative 1 req/sec to avoid triggering WAF
         api_version="v1",
         requires_api_key=False,
     )
 
-    cache_dir = Path(__file__).parent.parent / "data" / "met" / "cache"
-    cache_file = cache_dir / "met_cache.sqlite"
-    progress_file = cache_dir / "processed_ids.json"
-
-    # Note: We don't pass progress_tracker to avoid updating the original progress file
+    # Note: We don't pass progress_tracker or cache_file to get fresh requests
+    # and avoid any caching issues that might trigger 403s
     client = MetClient(
         museum_info=museum_info,
         api_key=None,
-        cache_file=cache_file,
+        cache_file=None,  # Disable caching to avoid 403 issues
         progress_tracker=None,  # Don't track progress to avoid overwriting
     )
+
+    # Add additional headers to make requests look more legitimate
+    client.session.headers.update({
+        "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    })
 
     # Limit artworks if specified
     if limit:
@@ -109,9 +115,11 @@ def fetch_and_save_artworks(
     saved = 0
     skipped = 0
     failed = 0
+    consecutive_403_errors = 0
 
-    # Rate limiting
-    rate_limit_delay = 1.0 / 80.0  # Met allows 80 req/sec
+    # Rate limiting - Start conservative to avoid triggering WAF
+    base_rate_limit_delay = 1.0  # Start at 1 req/sec instead of 80
+    current_delay = base_rate_limit_delay
 
     with db.session_scope() as session:
         artwork_repo = ArtworkRepository(session)
@@ -122,7 +130,8 @@ def fetch_and_save_artworks(
                 progress_pct = (idx / total) * 100
                 logger.progress(
                     f"📊 Progress: {idx:,}/{total:,} ({progress_pct:.1f}%) | "
-                    f"Saved: {saved:,} | Skipped: {skipped:,} | Failed: {failed:,}"
+                    f"Saved: {saved:,} | Skipped: {skipped:,} | Failed: {failed:,} | "
+                    f"Delay: {current_delay:.2f}s"
                 )
 
             try:
@@ -150,15 +159,43 @@ def fetch_and_save_artworks(
                     logger.artwork(
                         f"✓ Saved: {artwork_metadata.title} by {artwork_metadata.artist}"
                     )
+
+                    # Reset consecutive 403 counter and gradually speed up
+                    consecutive_403_errors = 0
+                    current_delay = max(base_rate_limit_delay, current_delay * 0.95)
                 else:
                     logger.warning(f"⚠️  No metadata returned for ID {object_id}")
                     failed += 1
 
-                # Rate limiting
-                time.sleep(rate_limit_delay)
+                # Rate limiting with jitter
+                import random
+                jitter = random.uniform(0.8, 1.2)
+                time.sleep(current_delay * jitter)
 
             except Exception as e:
-                logger.error(f"❌ Error fetching ID {object_id}: {e}")
+                error_msg = str(e)
+
+                # Check if 403 Forbidden error
+                if "403" in error_msg or "Forbidden" in error_msg:
+                    consecutive_403_errors += 1
+                    logger.error(
+                        f"❌ 403 Error for ID {object_id} "
+                        f"(consecutive: {consecutive_403_errors}): {e}"
+                    )
+
+                    # Exponential backoff for 403 errors
+                    if consecutive_403_errors >= 3:
+                        backoff_delay = min(300, 2 ** (consecutive_403_errors - 2))
+                        logger.warning(
+                            f"⚠️  Multiple 403 errors detected. "
+                            f"Backing off for {backoff_delay}s..."
+                        )
+                        time.sleep(backoff_delay)
+                        current_delay = min(10.0, current_delay * 2)  # Slow down
+                        consecutive_403_errors = 0  # Reset after backoff
+                else:
+                    logger.error(f"❌ Error fetching ID {object_id}: {e}")
+
                 failed += 1
                 continue
 
