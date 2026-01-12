@@ -167,13 +167,20 @@ def download_museum_collection(museum_id: str) -> None:
         progress_tracker = museum_config["tracker_class"](progress_file=progress_file)
 
         # Initialize components with museum-specific settings
-        client = museum_config["client_class"](
-            museum_info=museum_config["museum_info"],
-            api_key=settings.museums[museum_id].api_key,
-            cache_file=cache_file,
-            progress_tracker=progress_tracker,
-            data_dump_path=museum_config.get("data_dump_path"),
-        )
+        # Build client init parameters
+        client_params = {
+            "museum_info": museum_config["museum_info"],
+            "api_key": settings.museums[museum_id].api_key,
+            "cache_file": cache_file,
+            "progress_tracker": progress_tracker,
+        }
+
+        # Only add data_dump_path if the museum config has it
+        # (Met doesn't use data dumps, but AIC and CMA do)
+        if "data_dump_path" in museum_config and museum_config["data_dump_path"]:
+            client_params["data_dump_path"] = museum_config["data_dump_path"]
+
+        client = museum_config["client_class"](**client_params)
 
         image_processor = museum_config["processor_class"](
             output_dir=museum_paths["images"], museum_info=museum_config["museum_info"]
