@@ -1,5 +1,6 @@
 from typing import Dict, List, Any, Optional, Iterator, Set
 import time
+import random
 from pathlib import Path
 from PIL import Image
 from io import BytesIO
@@ -59,8 +60,18 @@ class MetClient(MuseumAPIClient):
         session.mount("http://", adapter)
 
         session.request = partial(session.request, timeout=(30, 300))
+
+        # Add additional headers to make requests look more legitimate and avoid 403s
+        session.headers.update({
+            "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+        })
+
         self.logger.debug(
-            "Met session configured with custom timeouts and retry strategy"
+            "Met session configured with custom timeouts, retry strategy, and browser-like headers"
         )
         return session
 
@@ -208,6 +219,11 @@ class MetClient(MuseumAPIClient):
 
             progress_interval = max(1, total_remaining // 100)
 
+            # Rate limiting with backoff for 403 errors
+            base_rate_limit_delay = self.museum_info.rate_limit
+            current_delay = base_rate_limit_delay
+            consecutive_403_errors = 0
+
             for idx, object_id in enumerate(unprocessed_ids):
                 if idx % progress_interval == 0:
                     progress = (idx / total_remaining) * 100
@@ -224,9 +240,39 @@ class MetClient(MuseumAPIClient):
                         self.logger.artwork(
                             f"Successfully processed artwork {object_id}"
                         )
+
+                        # Reset consecutive 403 counter and gradually speed up
+                        consecutive_403_errors = 0
+                        current_delay = max(base_rate_limit_delay, current_delay * 0.95)
+
                         yield artwork
+
+                    # Rate limiting with jitter
+                    jitter = random.uniform(0.8, 1.2)
+                    time.sleep(current_delay * jitter)
+
                 except Exception as e:
-                    self.logger.error(f"Error processing artwork {object_id}: {str(e)}")
+                    error_msg = str(e)
+
+                    # Check if 403 Forbidden error
+                    if "403" in error_msg or "Forbidden" in error_msg:
+                        consecutive_403_errors += 1
+                        self.logger.error(
+                            f"403 Error for ID {object_id} (consecutive: {consecutive_403_errors}): {e}"
+                        )
+
+                        # Exponential backoff for 403 errors
+                        if consecutive_403_errors >= 3:
+                            backoff_delay = min(300, 2 ** (consecutive_403_errors - 2))
+                            self.logger.warning(
+                                f"Multiple 403 errors detected. Backing off for {backoff_delay}s..."
+                            )
+                            time.sleep(backoff_delay)
+                            current_delay = min(10.0, current_delay * 2)  # Slow down
+                            consecutive_403_errors = 0  # Reset after backoff
+                    else:
+                        self.logger.error(f"Error processing artwork {object_id}: {error_msg}")
+
                     continue
 
         except Exception as e:

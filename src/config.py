@@ -149,8 +149,11 @@ class Settings(BaseSettings):
         default="https://collectionapi.metmuseum.org/public/collection/v1",
         env="MET_API_BASE_URL",
     )
-    met_user_agent: str = Field(default="MET-ArtDownloadBot/1.0", env="MET_USER_AGENT")
-    met_rate_limit: float = Field(default=80.0, env="MET_RATE_LIMIT")
+    met_user_agent: str = Field(
+        default="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        env="MET_USER_AGENT"
+    )
+    met_rate_limit: float = Field(default=1.0, env="MET_RATE_LIMIT")
 
     cma_api_base_url: str = Field(
         default="https://openaccess-api.clevelandart.org/api",
