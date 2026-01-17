@@ -14,11 +14,12 @@ class MuseumQuerySettings(BaseSettings):
 
     # Met Museum parameters
     met_departments: str = Field(
-        default="1|9|11|14|15|19|21",  # American decorative arts, Drawings & prints, european prints, islamic art, robert lehman collection, photographs, modern art
+        default="1|5|6|9|10|11|12|13|14|15|17|19|21",
+        # 1: American Decorative Arts, 5: Africa/Oceania/Americas, 6: Asian Art,
+        # 9: Drawings & Prints, 10: Egyptian Art, 11: European Paintings,
+        # 12: European Sculpture/Decorative Arts, 13: Greek & Roman Art, 14: Islamic Art,
+        # 15: Robert Lehman Collection, 17: Medieval Art, 19: Photographs, 21: Modern Art
         description="Pipe-separated department IDs for Met Museum",
-    )
-    met_highlight_only: bool = Field(
-        default=False, description="Whether to only fetch highlighted works from Met"
     )
 
     # AIC parameters
@@ -68,7 +69,7 @@ class MuseumQuerySettings(BaseSettings):
         """Get Met Museum query parameters"""
         return {
             "departmentIds": self.met_departments,
-            "isHighlight": self.met_highlight_only,
+            # Note: Omitting isHighlight parameter to get ALL artworks (highlights + non-highlights)
             "hasImages": True,
             "isPublicDomain": True,
         }
@@ -153,7 +154,7 @@ class Settings(BaseSettings):
         default="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         env="MET_USER_AGENT"
     )
-    met_rate_limit: float = Field(default=1.0, env="MET_RATE_LIMIT")
+    met_rate_limit: float = Field(default=2.0, env="MET_RATE_LIMIT")
 
     cma_api_base_url: str = Field(
         default="https://openaccess-api.clevelandart.org/api",
