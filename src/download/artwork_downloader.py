@@ -191,8 +191,13 @@ class ArtworkDownloader:
         self._download_count += 1
         self._total_size_bytes += size_bytes
 
-    def download_collection(self, params: Dict[str, Any]) -> None:
-        """Download all artwork matching the given parameters with batched commits."""
+    def download_collection(self, params: Dict[str, Any], limit: Optional[int] = None) -> None:
+        """Download all artwork matching the given parameters with batched commits.
+
+        Args:
+            params: Query parameters for filtering artworks
+            limit: Optional maximum number of artworks to download
+        """
         self.logger.progress(
             f"Starting collection download for {self.client.museum_info.name}"
         )
@@ -203,6 +208,9 @@ class ArtworkDownloader:
         batch_buffer = []
         download_images = getattr(self.settings, 'download_images', True)  # Default True for backward compatibility
 
+        # Track successful downloads for limit enforcement
+        successful_downloads = 0
+
         try:
             artwork_iterator = self.client.iter_collection(**params)
 
@@ -210,6 +218,15 @@ class ArtworkDownloader:
                 artwork_repo = ArtworkRepository(session)
 
                 while True:
+                    # Check if we've reached the limit
+                    if limit and successful_downloads >= limit:
+                        self.logger.progress(f"Reached download limit of {limit} artworks")
+                        # Process remaining batch before ending
+                        if batch_buffer:
+                            self._process_batch(artwork_repo, batch_buffer, download_images)
+                            batch_buffer.clear()
+                        break
+
                     try:
                         artwork = next(artwork_iterator, None)
                         if artwork is None:
@@ -229,6 +246,7 @@ class ArtworkDownloader:
                             result = self._prepare_artwork(artwork, download_images)
                             if result:
                                 batch_buffer.append(result)
+                                successful_downloads += 1
                                 consecutive_errors = 0
 
                                 # Process batch when it reaches batch_size

@@ -2,7 +2,7 @@ import sys
 import logging
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import concurrent.futures
 
 from src.config import settings
@@ -16,25 +16,26 @@ from src.utils import setup_logging
 
 def download_museum_collection_wrapper(args: tuple) -> None:
     """Wrapper function to unpack arguments for concurrent execution"""
-    museum_id, settings = args
+    museum_id, settings, limit = args
     try:
-        download_museum_collection(museum_id=museum_id)
+        download_museum_collection(museum_id=museum_id, limit=limit)
     except Exception as e:
         logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
         logger.error(f"Error downloading from {museum_id}: {e}")
         raise
 
 
-def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3) -> None:
+def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3, limit: Optional[int] = None) -> None:
     """Run multiple museum downloaders in parallel
 
     Args:
         museum_ids: List of museum IDs to process
         max_workers: Max number of concurrent downloads
+        limit: Optional limit on number of artworks to download per museum
     """
 
     # Create args for each download task
-    download_args = [(museum_id, settings) for museum_id in museum_ids]
+    download_args = [(museum_id, settings, limit) for museum_id in museum_ids]
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_museum = {
@@ -149,8 +150,13 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
     return configs[museum_id]
 
 
-def download_museum_collection(museum_id: str) -> None:
-    """Downloads art collection from a specific museum"""
+def download_museum_collection(museum_id: str, limit: Optional[int] = None) -> None:
+    """Downloads art collection from a specific museum
+
+    Args:
+        museum_id: The museum identifier (e.g., 'aic', 'met', 'cma')
+        limit: Optional limit on number of artworks to download
+    """
     logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
     downloader = None
 
@@ -197,7 +203,9 @@ def download_museum_collection(museum_id: str) -> None:
         logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
         logger.info(f"Starting download for {museum_id} museum")
         logger.info(f"Museum params: {museum_config['params']}")
-        downloader.download_collection(museum_config["params"])
+        if limit:
+            logger.info(f"Download limit: {limit} artworks")
+        downloader.download_collection(museum_config["params"], limit=limit)
 
     except KeyboardInterrupt:
         logger.info(f"Download interrupted by user")
@@ -236,7 +244,7 @@ def main():
         "--limit",
         "-l",
         type=int,
-        help="Limit number of artworks to download (currently not implemented)",
+        help="Limit number of artworks to download per museum",
     )
     args = parser.parse_args()
 
@@ -251,13 +259,9 @@ def main():
     else:
         museum_ids = list(settings.museums.keys())
 
-    # Note: --limit flag is parsed but not yet implemented in download logic
-    if args.limit:
-        logger.warning(f"--limit flag is not yet implemented, ignoring limit={args.limit}")
-
     downloaders = []
     try:
-        run_parallel_downloads(museum_ids)
+        run_parallel_downloads(museum_ids, limit=args.limit)
     except KeyboardInterrupt:
         logger.progress(f"Download process interrupted by user")
         for downloader in downloaders:  # Print summary for each active downloader
