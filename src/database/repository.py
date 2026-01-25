@@ -88,6 +88,12 @@ class ArtworkRepository:
         artwork.color_s = metadata.color_s
         artwork.color_l = metadata.color_l
 
+        # Image Quality & Dimensions
+        artwork.image_pixel_width = metadata.image_pixel_width
+        artwork.image_pixel_height = metadata.image_pixel_height
+        artwork.quality_scores = metadata.quality_scores
+        artwork.quality_score = metadata.quality_score
+
         self.session.commit()
         return artwork
 
@@ -203,6 +209,12 @@ class ArtworkRepository:
             artwork.color_h = metadata.color_h
             artwork.color_s = metadata.color_s
             artwork.color_l = metadata.color_l
+
+            # Image Quality & Dimensions
+            artwork.image_pixel_width = metadata.image_pixel_width
+            artwork.image_pixel_height = metadata.image_pixel_height
+            artwork.quality_scores = metadata.quality_scores
+            artwork.quality_score = metadata.quality_score
 
             results.append(artwork)
 

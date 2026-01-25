@@ -321,18 +321,26 @@ class CMAImageProcessor(MuseumImageProcessor):
         super().__init__(output_dir, museum_info)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "cma")
 
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
-        """Process and save artwork image"""
+    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
+        """
+        Process and save artwork image.
+
+        Returns:
+            Tuple of (filepath, width, height) where width and height are in pixels
+        """
         try:
             self.logger.debug(f"Processing image for artwork {metadata.id}")
             image = Image.open(BytesIO(image_data))
+
+            # Capture image dimensions
+            width, height = image.size
 
             filename = self.generate_filename(metadata)
             filepath = self.output_dir / filename
 
             image.save(filepath, format="JPEG", quality=95)
-            self.logger.artwork(f"Saved image to {filepath}")
-            return filepath
+            self.logger.artwork(f"Saved image to {filepath} ({width}x{height})")
+            return filepath, width, height
         except Exception as e:
             self.logger.error(f"Failed to process object {metadata.id}: {str(e)}")
             raise RuntimeError(f"Failed to process object {metadata.id}: {str(e)}")

@@ -186,12 +186,20 @@ class AICImageProcessor(MuseumImageProcessor):
         super().__init__(output_dir, museum_info)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "aic")
 
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
-        """Process and save an artwork image"""
+    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
+        """
+        Process and save an artwork image.
+
+        Returns:
+            Tuple of (filepath, width, height) where width and height are in pixels
+        """
         try:
             # Open image from bytes
             self.logger.debug(f"Processing image for artwork {metadata.id}")
             image = Image.open(BytesIO(image_data))
+
+            # Capture image dimensions
+            width, height = image.size
 
             # Generate filename and full path
             filename = self.generate_filename(metadata)
@@ -199,8 +207,8 @@ class AICImageProcessor(MuseumImageProcessor):
 
             # Save the image
             image.save(filepath, format="JPEG", quality=95)
-            self.logger.artwork(f"Saved image to {filepath}")
-            return filepath
+            self.logger.artwork(f"Saved image to {filepath} ({width}x{height})")
+            return filepath, width, height
 
         except Exception as e:
             self.logger.error(

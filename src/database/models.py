@@ -90,6 +90,12 @@ class Artwork(Base):
     color_s = Column(Integer)
     color_l = Column(Integer)
 
+    # Image Quality & Dimensions
+    image_pixel_width = Column(Integer)  # Downloaded image width in pixels
+    image_pixel_height = Column(Integer)  # Downloaded image height in pixels
+    quality_scores = Column(JSON)  # Display-specific quality scores: {"macbook_14": 85, "firetv_4k": 92, ...}
+    quality_score = Column(Integer)  # Backward compatibility: average of all display scores
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

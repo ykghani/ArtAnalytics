@@ -119,6 +119,12 @@ class ArtworkMetadata:
     color_s: Optional[int] = None
     color_l: Optional[int] = None
 
+    # Image Quality & Dimensions (captured during download)
+    image_pixel_width: Optional[int] = None
+    image_pixel_height: Optional[int] = None
+    quality_scores: Optional[Dict[str, int]] = None  # Display-specific quality scores
+    quality_score: Optional[int] = None  # Backward compatibility: average of all display scores
+
 
 class ArtworkMetadataFactory(ABC):
     """Abstract base factory for creating ArtworkMetadata objects"""

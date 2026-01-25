@@ -1,5 +1,6 @@
 import sys
 import logging
+import argparse
 from pathlib import Path
 from typing import Dict, Any, List
 import concurrent.futures
@@ -214,20 +215,45 @@ def main():
     project_root = Path(__file__).parent
     settings.initialize_paths(project_root)
 
+    # Setup argument parser
+    parser = argparse.ArgumentParser(
+        description="Download artwork collections from museums"
+    )
+    parser.add_argument(
+        "museums",
+        nargs="*",
+        choices=["aic", "met", "cma"],
+        help="Museum IDs to download. If not provided, downloads from all museums",
+    )
+    parser.add_argument(
+        "--museum",
+        "-m",
+        dest="museum_flag",
+        choices=["aic", "met", "cma"],
+        help="Single museum to download (alternative to positional argument)",
+    )
+    parser.add_argument(
+        "--limit",
+        "-l",
+        type=int,
+        help="Limit number of artworks to download (currently not implemented)",
+    )
+    args = parser.parse_args()
+
     # Setup logging with configured level
     logger = setup_logging(settings.logs_dir, settings.log_level, None)
 
-    if len(sys.argv) > 1:
-        museum_ids = sys.argv[1:]
+    # Determine which museums to process
+    if args.museum_flag:
+        museum_ids = [args.museum_flag]
+    elif args.museums:
+        museum_ids = args.museums
     else:
         museum_ids = list(settings.museums.keys())
 
-    valid_museums = set(settings.museums.keys())
-    invalid_museums = set(museum_ids) - valid_museums
-    if invalid_museums:
-        print(f"Invalid museum IDs: {', '.join(invalid_museums)}")
-        print(f"Available museums: {', '.join(valid_museums)}")
-        sys.exit(1)
+    # Note: --limit flag is parsed but not yet implemented in download logic
+    if args.limit:
+        logger.warning(f"--limit flag is not yet implemented, ignoring limit={args.limit}")
 
     downloaders = []
     try:

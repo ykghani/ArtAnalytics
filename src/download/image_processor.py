@@ -39,7 +39,7 @@ class ImageProcessor:
         """Ensure output directory exists."""
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
+    def save_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
         """
         Process and save an image using museum-specific filename generation.
 
@@ -48,7 +48,7 @@ class ImageProcessor:
             metadata: Standardized artwork metadata
 
         Returns:
-            Path to the saved image file
+            Tuple of (filepath, width, height) - Path to the saved image and its dimensions in pixels
 
         Raises:
             IOError: If there's an error saving the image
@@ -59,12 +59,13 @@ class ImageProcessor:
             filename = self.filename_generator.generate_filename(metadata)
             filepath = self.output_dir / filename
 
-            # Process and save image
+            # Process and save image, capturing dimensions
             image = Image.open(BytesIO(image_data))
+            width, height = image.size  # Capture image dimensions
             image.save(filepath, format="JPEG", quality=95)
 
-            self.logger.debug(f"Successfully saved image: {filepath.name}")
-            return filepath
+            self.logger.debug(f"Successfully saved image: {filepath.name} ({width}x{height})")
+            return filepath, width, height
 
         except (IOError, ValueError) as e:
             error_msg = f"Error saving image for artwork {metadata.id}: {str(e)}"

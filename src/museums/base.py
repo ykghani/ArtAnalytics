@@ -107,8 +107,13 @@ class MuseumImageProcessor(ABC):
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     @abstractmethod
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> Path:
-        """Process and save image, return path to saved file"""
+    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
+        """
+        Process and save image, return path to saved file and dimensions.
+
+        Returns:
+            Tuple of (filepath, width, height) where width and height are in pixels
+        """
         pass
 
     @abstractmethod

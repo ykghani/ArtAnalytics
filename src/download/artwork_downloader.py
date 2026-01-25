@@ -15,6 +15,7 @@ from ..museums.cma import CMAProgressTracker
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import setup_logging
+from ..quality_scoring import calculate_quality_scores_for_all_displays, calculate_average_quality_score
 
 
 class ArtworkDownloader:
@@ -148,15 +149,26 @@ class ArtworkDownloader:
                     )
                     return
 
-                image_path = self.image_processor.process_image(
+                # Process image and capture dimensions
+                filepath, width, height = self.image_processor.process_image(
                     image_data, artwork_metadata
                 )
+
+                # Calculate quality scores for all display types
+                quality_scores = calculate_quality_scores_for_all_displays(width, height)
+                avg_score = calculate_average_quality_score(quality_scores)
+
+                # Store dimensions and quality scores in metadata
+                artwork_metadata.image_pixel_width = width
+                artwork_metadata.image_pixel_height = height
+                artwork_metadata.quality_scores = quality_scores
+                artwork_metadata.quality_score = avg_score
 
                 # Save to database
                 self.artwork_repo.create_or_update_artwork(
                     metadata=artwork_metadata,
                     museum_code=self.client.museum_info.code,
-                    image_path=str(image_path),
+                    image_path=str(filepath),
                 )
 
                 self._update_download_stats(image_size)
@@ -289,9 +301,22 @@ class ArtworkDownloader:
                         )
                         return None
 
-                    image_path = str(self.image_processor.process_image(
+                    # Process image and capture dimensions
+                    filepath, width, height = self.image_processor.process_image(
                         image_data, artwork_metadata
-                    ))
+                    )
+                    image_path = str(filepath)
+
+                    # Calculate quality scores for all display types
+                    quality_scores = calculate_quality_scores_for_all_displays(width, height)
+                    avg_score = calculate_average_quality_score(quality_scores)
+
+                    # Store dimensions and quality scores in metadata
+                    artwork_metadata.image_pixel_width = width
+                    artwork_metadata.image_pixel_height = height
+                    artwork_metadata.quality_scores = quality_scores
+                    artwork_metadata.quality_score = avg_score
+
                     self._update_download_stats(image_size)
                 else:
                     self.logger.debug(f"No image available for {artwork_info}")
