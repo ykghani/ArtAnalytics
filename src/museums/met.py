@@ -369,13 +369,16 @@ class MetProgressState(ProgressState):
 
 
 class MetProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
+    def __init__(self, progress_file: Path, max_cache_size: int = 10000, save_batch_size: int = 100):
+        # Initialize state before calling super().__init__() since parent's _load_progress()
+        # calls restore_state() which needs self.state to exist
+        self.state = MetProgressState()
+        super().__init__(progress_file, max_cache_size, save_batch_size)
+        # Override the parent's logger with museum-specific logger
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "met")
         self.logger.debug(
-            f"Initializing Met progress tracker with file: {progress_file}"
+            f"Initialized Met progress tracker with file: {progress_file}"
         )
-        self.state = MetProgressState()
-        super().__init__(progress_file)
 
     def get_state_dict(self) -> Dict[str, Any]:
         self.logger.debug("Preparing progress state dictionary")

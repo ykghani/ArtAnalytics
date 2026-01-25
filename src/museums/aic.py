@@ -242,11 +242,13 @@ class AICProgressState(ProgressState):
 
 
 class AICProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.progress_file = progress_file
+    def __init__(self, progress_file: Path, max_cache_size: int = 10000, save_batch_size: int = 100):
+        # Initialize state before calling super().__init__() since parent's _load_progress()
+        # calls restore_state() which needs self.state to exist
         self.state = AICProgressState()
+        super().__init__(progress_file, max_cache_size, save_batch_size)
+        # Override the parent's logger with museum-specific logger
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "aic")
-        self._load_progress()
 
     def get_state_dict(self) -> Dict[str, Any]:
         return {
@@ -256,6 +258,8 @@ class AICProgressTracker(BaseProgressTracker):
             "error_log": self.state.error_log,
             "last_page": self.state.last_page,
             "total_pages": self.state.total_pages,
+            "last_processed_index": self.state.last_processed_index,
+            "total_files": self.state.total_files,
         }
 
     def restore_state(self, data: Dict[str, Any]) -> None:
@@ -265,6 +269,8 @@ class AICProgressTracker(BaseProgressTracker):
         self.state.error_log = data.get("error_log", {})
         self.state.last_page = data.get("last_page", 0)
         self.state.total_pages = data.get("total_pages", 0)
+        self.state.last_processed_index = data.get("last_processed_index", 0)
+        self.state.total_files = data.get("total_files", 0)
 
     def update_page(self, page: int) -> None:
         """Update last processed page numebr"""

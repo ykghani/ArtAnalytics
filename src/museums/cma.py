@@ -368,11 +368,13 @@ class CMAProgressState:
 
 
 class CMAProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path):
-        self.progress_file = progress_file
+    def __init__(self, progress_file: Path, max_cache_size: int = 10000, save_batch_size: int = 100):
+        # Initialize state before calling super().__init__() since parent's _load_progress()
+        # calls restore_state() which needs self.state to exist
         self.state = CMAProgressState()
+        super().__init__(progress_file, max_cache_size, save_batch_size)
+        # Override the parent's logger with museum-specific logger
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "cma")
-        self._load_progress()
 
     def get_state_dict(self) -> Dict[str, Any]:
         return {

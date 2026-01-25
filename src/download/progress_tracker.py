@@ -75,7 +75,11 @@ class BaseProgressTracker(ABC):
             if not isinstance(progress_file, Path)
             else progress_file
         )
-        self.state = ProgressState()
+        # Note: self.state should be initialized by child classes before calling super().__init__()
+        # This allows each museum to use its own state class (e.g., AICProgressState)
+        if not hasattr(self, 'state'):
+            self.state = ProgressState()
+
         self.logger = setup_logging(
             self.progress_file.parent, settings.log_level, "progress"
         )
