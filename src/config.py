@@ -7,6 +7,7 @@ from enum import Enum
 
 from .museums.museum_info import MuseumInfo
 from .log_level import LogLevel
+from artserve_shared.museums import MUSEUMS as SHARED_MUSEUMS
 
 
 class MuseumQuerySettings(BaseSettings):
@@ -183,6 +184,7 @@ class Settings(BaseSettings):
     @property
     def museums(self) -> Dict[str, MuseumConfig]:
         """Create museum configurations using the settings."""
+        # Use shared museum metadata for names and base configuration
         return {
             "aic": MuseumConfig(
                 api_base_url=self.aic_api_base_url,
@@ -190,7 +192,7 @@ class Settings(BaseSettings):
                 rate_limit=self.aic_rate_limit,
                 contact_email=self.default_contact_email,
                 code="aic",
-                name="Art Institute of Chicago",
+                name=SHARED_MUSEUMS["aic"].name,
                 use_data_dump=self.aic_use_data_dump,
                 data_dump_path=self.data_dir / self.aic_data_dump_path,
             ),
@@ -200,7 +202,7 @@ class Settings(BaseSettings):
                 rate_limit=self.met_rate_limit,
                 contact_email=self.default_contact_email,
                 code="met",
-                name="Metropolitan Museum of Art",
+                name=SHARED_MUSEUMS["met"].name,
             ),
             "cma": MuseumConfig(
                 api_base_url=self.cma_api_base_url,
@@ -208,7 +210,7 @@ class Settings(BaseSettings):
                 rate_limit=self.cma_rate_limit,
                 contact_email=self.default_contact_email,
                 code="cma",
-                name="Cleveland Museum of Art",
+                name=SHARED_MUSEUMS["cma"].name,
                 use_data_dump=self.cma_use_data_dump,
                 data_dump_path=self.data_dir / self.cma_data_dump_path,
             ),
