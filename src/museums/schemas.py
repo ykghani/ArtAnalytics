@@ -177,16 +177,12 @@ class AICArtworkFactory(ArtworkMetadataFactory):
                 self.logger.debug(f"Artwork {data.get('id')} has no image data")
                 return None
 
+            # Use shared IIIF URL builder (replaces hardcoded URLs)
+            from artserve_shared.iiif import build_aic_iiif_urls_legacy
+
             image_urls = {}
             if image_id:
-                base_url = "https://www.artic.edu/iiif/2"
-                image_urls = {
-                    "web": f"{base_url}/{image_id}/full/843,/0/default.jpg",
-                    "print": f"{base_url}/{image_id}/full/,1686/0/default.jpg",  # Scale by height
-                    "full": f"{base_url}/{image_id}/full/max/0/default.jpg",  # Get native size
-                    "macbook_16": f"{base_url}/{image_id}/full/3456,/0/default.jpg",  # MacBook Pro 16" width
-                    "macbook_14": f"{base_url}/{image_id}/full/3024,/0/default.jpg",  # MacBook Pro 14" width
-                }
+                image_urls = build_aic_iiif_urls_legacy(image_id)
 
             return ArtworkMetadata(
                 id=str(data["id"]),
