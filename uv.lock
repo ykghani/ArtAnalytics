@@ -131,6 +131,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "artserve-shared" },
     { name = "fastapi" },
     { name = "ijson" },
     { name = "pillow" },
@@ -160,6 +161,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14.0" },
+    { name = "artserve-shared", editable = "../ArtServe-Shared/python" },
     { name = "fastapi", specifier = ">=0.115.6" },
     { name = "ijson", specifier = ">=3.2.0" },
     { name = "pillow", specifier = ">=11.0.0" },
@@ -185,6 +187,20 @@ dev = [
     { name = "numpy", specifier = ">=2.1.2" },
     { name = "pandas", specifier = ">=2.2.3" },
 ]
+
+[[package]]
+name = "artserve-shared"
+version = "0.1.0"
+source = { editable = "../ArtServe-Shared/python" }
+dependencies = [
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pydantic", specifier = ">=2.0.0" }]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0.0" }]
 
 [[package]]
 name = "asttokens"

@@ -15,7 +15,12 @@ from ..museums.cma import CMAProgressTracker
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import setup_logging
-from ..quality_scoring import calculate_quality_scores_for_all_displays, calculate_average_quality_score
+
+# Import quality scoring from shared package
+from artserve_shared.quality_scoring import (
+    calculate_quality_scores_for_all_displays,
+    calculate_average_quality_score,
+)
 
 
 class ArtworkDownloader:
