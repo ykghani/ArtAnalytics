@@ -168,6 +168,19 @@ class Settings(BaseSettings):
     cma_use_data_dump: bool = Field(default=False, env="CMA_USE_DATA_DUMP")
     cma_data_dump_path: str = Field(default="CMA_data.json", env="CMA_DATA_DUMP_PATH")
 
+    mia_repo_url: str = Field(
+        default="https://github.com/artsmia/collection.git",
+        env="MIA_REPO_URL"
+    )
+    mia_repo_path: str = Field(
+        default="mia/collection",
+        env="MIA_REPO_PATH"
+    )
+    mia_user_agent: str = Field(
+        default="MIA-ArtDownloadBot/1.0",
+        env="MIA_USER_AGENT"
+    )
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -214,6 +227,16 @@ class Settings(BaseSettings):
                 use_data_dump=self.cma_use_data_dump,
                 data_dump_path=self.data_dir / self.cma_data_dump_path,
             ),
+            "mia": MuseumConfig(
+                api_base_url="http://api.artsmia.org",  # For image URLs
+                user_agent=self.mia_user_agent,
+                rate_limit=0,  # No rate limit (local git repo)
+                contact_email=self.default_contact_email,
+                code="mia",
+                name=SHARED_MUSEUMS["mia"].name,
+                use_data_dump=True,  # Always use git repo
+                data_dump_path=self.data_dir / self.mia_repo_path,
+            ),
         }
 
     # File System Configuration
@@ -258,6 +281,7 @@ class Settings(BaseSettings):
             "aic": self.data_dir / "aic",
             "met": self.data_dir / "met",
             "cma": self.data_dir / "cma",
+            "mia": self.data_dir / "mia",
         }
 
         for museum, base_dir in self.museum_dirs.items():
