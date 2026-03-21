@@ -10,6 +10,8 @@ dependencies = [
     # HTTP & API
     "requests>=2.32.3",
     "requests-cache>=1.2.1",
+    "beautifulsoup4>=4.12.0",
+    "playwright>=1.40.0",
     # Database
     "sqlalchemy>=2.0.36",
     "alembic>=1.14.0",
@@ -26,9 +28,8 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=0.21.0",
     # MacOS (for wallpaper script)
-    "rumps>=0.4.0",
-    "py2app>=0.28.8",
     "artserve-shared",
+    "psycopg2-binary>=2.9.11",
 ]
 
 [tool.uv]

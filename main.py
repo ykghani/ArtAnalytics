@@ -10,6 +10,7 @@ from src.download import ArtworkDownloader, BaseProgressTracker, ImageProcessor
 from src.museums.aic import AICClient, AICImageProcessor, AICProgressTracker
 from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
+from src.museums.mia import MIAClient, MIAImageProcessor, MIAProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 from src.utils import setup_logging
 
@@ -60,6 +61,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         "aic": "Art Institute of Chicago",
         "met": "Metropolitan Museum of Art",
         "cma": "Cleveland Museum of Art",
+        "mia": "Minneapolis Institute of Art",
     }
 
     return MuseumInfo(
@@ -69,7 +71,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         user_agent=config.user_agent,
         rate_limit=config.rate_limit,
         api_version=config.api_version,
-        requires_api_key=False,  # Neither museum requires API key
+        requires_api_key=False,  # No museums require API key
     )
 
 
@@ -88,6 +90,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         "aic": settings.museum_queries.get_aic_params(),
         "met": settings.museum_queries.get_met_params(),
         "cma": settings.museum_queries.get_cma_params(),
+        "mia": {},  # MIA doesn't use query params (git repo)
     }.get(museum_id, {})
 
     # Handle data dump configuration
@@ -142,6 +145,14 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "tracker_class": CMAProgressTracker,
             "data_dump_path": data_dump_path,
         },
+        "mia": {
+            **base_config,
+            "client_class": MIAClient,
+            "processor_class": MIAImageProcessor,
+            "tracker_class": MIAProgressTracker,
+            "repo_path": data_dump_path,  # Git repo path
+            "repo_url": settings.mia_repo_url,
+        },
     }
 
     if museum_id not in configs:
@@ -187,6 +198,11 @@ def download_museum_collection(museum_id: str, limit: Optional[int] = None) -> N
         if "data_dump_path" in museum_config and museum_config["data_dump_path"]:
             client_params["data_dump_path"] = museum_config["data_dump_path"]
 
+        # MIA-specific parameters (git repo)
+        if museum_id == "mia":
+            client_params["repo_path"] = museum_config["repo_path"]
+            client_params["repo_url"] = museum_config["repo_url"]
+
         client = museum_config["client_class"](**client_params)
 
         image_processor = museum_config["processor_class"](
@@ -230,14 +246,14 @@ def main():
     parser.add_argument(
         "museums",
         nargs="*",
-        choices=["aic", "met", "cma"],
+        choices=["aic", "met", "cma", "mia"],
         help="Museum IDs to download. If not provided, downloads from all museums",
     )
     parser.add_argument(
         "--museum",
         "-m",
         dest="museum_flag",
-        choices=["aic", "met", "cma"],
+        choices=["aic", "met", "cma", "mia"],
         help="Single museum to download (alternative to positional argument)",
     )
     parser.add_argument(
