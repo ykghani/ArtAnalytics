@@ -254,13 +254,14 @@ class MIAArtworkFactory(ArtworkMetadataFactory):
             'Books, Prints', ' Prints; Books', 'Books, Drawings',
             'Prints, Books', 'Drawings, Books',
         }
-        
+
         classification = data.get('classification', '').strip()
         if classification and classification not in allowed_classifications:
             self.logger.progress(
                 f"SKIP: Artwork {artwork_id} - classification '{classification}' not suitable for digital display (3D object or non-artwork)"
             )
             return None
+
         try:
             # Parse artist birth/death years from life_date
             # Format: "Dutch, 1853–1890" or "American, 1838 - 1909"

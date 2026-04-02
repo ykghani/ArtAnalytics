@@ -212,7 +212,7 @@ class AICArtworkFactory(ArtworkMetadataFactory):
                 is_public_domain=bool(data.get("is_public_domain", False)),
                 credit_line=data.get("credit_line", ""),
                 is_on_view=bool(data.get("is_on_view", False)),
-                is_highlight=False,
+                is_highlight=bool(data.get("is_highlight", False)),
                 is_boosted=bool(data.get("is_boosted", False)),
                 boost_rank=data.get("boost_rank"),
                 has_not_been_viewed_much=bool(

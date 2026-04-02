@@ -50,6 +50,7 @@ class Database:
             {"code": "met", "name": "Metropolitan Museum of Art"},
             {"code": "aic", "name": "Art Institute of Chicago"},
             {"code": "cma", "name": "Cleveland Museum of Art"},
+            {"code": "mia", "name": "Minneapolis Institute of Art"},
         ]
 
         for museum_data in museums:

@@ -1,6 +1,6 @@
 [project]
 name = "artserve-downloader"
-version = "0.1.0"
+version = "0.1.1"
 description = "Art museum API integration and artwork downloader"
 authors = [{name = "Yusuf Ghani", email = "yusuf.k.ghani@gmail.com"}]
 readme = "README.md"
