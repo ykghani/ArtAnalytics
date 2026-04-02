@@ -52,10 +52,32 @@ def _get_browser_context():
     return _browser_context
 
 
+def _verify_url_exists(url: str, timeout: int = 10) -> bool:
+    """
+    Verify that a URL exists and is accessible via HEAD request.
+
+    Args:
+        url: URL to check
+        timeout: Request timeout in seconds
+
+    Returns:
+        True if URL returns 200 OK, False otherwise
+    """
+    try:
+        response = requests.head(url, timeout=timeout, allow_redirects=True)
+        return response.status_code == 200
+    except Exception:
+        return False
+
+
 @lru_cache(maxsize=1000)
 def scrape_mia_image_url(artwork_id: str) -> Optional[str]:
     """
     Scrape the actual CDN image URL from MIA's collection page using Playwright.
+
+    Strategy: Get the web-resolution URL (_800.jpg) from the page, then attempt
+    to transform it to full-resolution (_full.jpg). Falls back to web version
+    if full resolution is not available.
 
     The download button contains the full CDN URL with the hash component
     that's not available in the JSON metadata. Since the page is client-side
@@ -65,11 +87,13 @@ def scrape_mia_image_url(artwork_id: str) -> Optional[str]:
         artwork_id: MIA object ID
 
     Returns:
-        Full CDN URL or None if scraping fails
+        Full CDN URL (preferring _full.jpg, falling back to _800.jpg) or None if scraping fails
 
     Example:
         Input: "1218"
-        Output: "https://img.artsmia.org/web_objects_cache/001000/200/10/1218/mia_8017891_full.jpg"
+        Scraped: "https://img.artsmia.org/.../mia_8017891_800.jpg"
+        Returns: "https://img.artsmia.org/.../mia_8017891_full.jpg" (if exists)
+                 OR "https://img.artsmia.org/.../mia_8017891_800.jpg" (fallback)
     """
     collection_url = f"https://collections.artsmia.org/art/{artwork_id}"
 
@@ -92,13 +116,33 @@ def scrape_mia_image_url(artwork_id: str) -> Optional[str]:
             cdn_url = download_button.get_attribute('href')
             page.close()
 
-            # Validate it's the expected CDN pattern
-            if cdn_url and 'img.artsmia.org' in cdn_url and '_full.jpg' in cdn_url:
-                return cdn_url
-            else:
-                page.close()
+            # Validate basic URL structure
+            if not cdn_url or 'img.artsmia.org' not in cdn_url:
                 print(f"Warning: Download button found for artwork {artwork_id} but URL format invalid: {cdn_url}")
                 return None
+
+            # Check if URL has an image extension
+            if not ('.jpg' in cdn_url.lower() or '.jpeg' in cdn_url.lower() or '.png' in cdn_url.lower()):
+                print(f"Warning: Download button found for artwork {artwork_id} but URL is not an image: {cdn_url}")
+                return None
+
+            # Option 3: Try to get full resolution, fall back to web version
+            # Transform _NNN.jpg (e.g., _800.jpg, _1024.jpg) to _full.jpg
+            full_url = re.sub(r'_\d+\.(jpg|jpeg|png)$', r'_full.\1', cdn_url, flags=re.IGNORECASE)
+
+            if full_url != cdn_url:
+                # We successfully transformed the URL, now verify it exists
+                print(f"Info: Checking if full resolution exists for artwork {artwork_id}...")
+                if _verify_url_exists(full_url):
+                    print(f"Success: Full resolution available for artwork {artwork_id}: {full_url}")
+                    return full_url
+                else:
+                    print(f"Info: Full resolution not available for artwork {artwork_id}, using web version: {cdn_url}")
+                    return cdn_url
+            else:
+                # URL didn't match the pattern (might already be _full.jpg or different format)
+                # Just return it as-is
+                return cdn_url
 
         page.close()
         print(f"Warning: No download button on MIA page for artwork {artwork_id} at {collection_url} (image may not be available on museum CDN)")
@@ -173,14 +217,48 @@ class MIAArtworkFactory(ArtworkMetadataFactory):
 
         # Only process artworks with valid images that are not restricted
         if data.get("image") != "valid":
-            self.logger.debug(
-                f"Artwork {artwork_id} skipped - image status is '{data.get('image')}' (must be 'valid')"
+            self.logger.progress(
+                f"SKIP: Artwork {artwork_id} - image status is '{data.get('image')}' (must be 'valid')"
             )
             return None
 
         if data.get("restricted", 1) != 0:
-            self.logger.debug(
-                f"Artwork {artwork_id} skipped - restricted={data.get('restricted')} (not public domain)"
+            self.logger.progress(
+                f"SKIP: Artwork {artwork_id} - not public domain (restricted={data.get('restricted')})"
+            )
+            return None
+
+
+        # Filter for digital display-friendly artwork types
+        # Only include 2D artworks that look good on screens
+        allowed_classifications = {
+            'Photographs', 'Prints', 'Drawings', 'Paintings', 'Calligraphy',
+            'Works on Paper', 'Manuscript',
+            # Include variations with leading spaces
+            ' Photographs', ' Prints', ' Drawings', ' Paintings', ' Calligraphy',
+            ' Works on Paper', ' Manuscript',
+            # Include common subcategories
+            'Drawings, Works on Paper', 'Prints, Works on Paper',
+            'Paintings, Works on Paper', 'Photographs, Prints',
+            'Drawings, Prints, Works on Paper', 'Prints, Drawings, Works on Paper',
+            'Paintings, Drawings, Works on Paper', 'Drawings, Paintings, Works on Paper',
+            'Paintings, Drawings', 'Drawings, Paintings',
+            'Photographs, Works on Paper', 'Drawings, Photographs, Works on Paper',
+            'Prints, Photographs, Works on Paper', 'Prints, Photographs',
+            'Photographs, Collages / Assemblages',  # Photographic collages
+            'Prints, Collages / Assemblages',  # Print collages
+            'Drawings, Collages / Assemblages',  # Drawing collages
+            'Collages / Assemblages, Works on Paper',  # Paper-based collages
+            ' Paintings; Calligraphy', 'Paintings, Calligraphy',
+            ' Drawings; Works on Paper',
+            'Books, Prints', ' Prints; Books', 'Books, Drawings',
+            'Prints, Books', 'Drawings, Books',
+        }
+
+        classification = data.get('classification', '').strip()
+        if classification and classification not in allowed_classifications:
+            self.logger.progress(
+                f"SKIP: Artwork {artwork_id} - classification '{classification}' not suitable for digital display (3D object or non-artwork)"
             )
             return None
 
@@ -220,15 +298,21 @@ class MIAArtworkFactory(ArtworkMetadataFactory):
             # Scrape the actual CDN image URL from the collection page
             # This is necessary because the JSON doesn't contain the hash component
             # Example: https://img.artsmia.org/web_objects_cache/001000/200/10/1218/mia_8017891_full.jpg
+            self.logger.progress(
+                f"PROCESS: Artwork {artwork_id} - '{data.get('title', 'Untitled')}' by {data.get('artist', 'Unknown')} [{classification}]"
+            )
             primary_image_url = scrape_mia_image_url(artwork_id)
 
             # Skip artworks where we can't find a valid image URL
             if not primary_image_url:
-                self.logger.debug(
-                    f"Artwork {artwork_id} skipped - no downloadable image URL on museum website (see warning above for details)"
+                self.logger.progress(
+                    f"SKIP: Artwork {artwork_id} - no downloadable image URL found on museum website"
                 )
                 return None
 
+            self.logger.progress(
+                f"SUCCESS: Artwork {artwork_id} accepted for download"
+            )
             return ArtworkMetadata(
                 id=artwork_id,
                 accession_number=data.get("accession_number", ""),
@@ -424,7 +508,7 @@ class MIAClient(MuseumAPIClient):
     def _ensure_repo_ready(self) -> None:
         """Clone or update the MIA collection repository"""
         if not self.repo_path.exists():
-            self.logger.info(
+            self.logger.progress(
                 f"Cloning MIA collection repository to {self.repo_path}..."
             )
             self.repo_path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,15 +517,15 @@ class MIAClient(MuseumAPIClient):
                 check=True,
                 capture_output=True,
             )
-            self.logger.info("Repository cloned successfully")
+            self.logger.progress("Repository cloned successfully")
         else:
-            self.logger.info("Updating MIA collection repository...")
+            self.logger.progress("Updating MIA collection repository...")
             subprocess.run(
                 ["git", "-C", str(self.repo_path), "pull"],
                 check=True,
                 capture_output=True,
             )
-            self.logger.info("Repository updated successfully")
+            self.logger.progress("Repository updated successfully")
 
         # Store current commit hash for tracking
         result = subprocess.run(
@@ -453,7 +537,7 @@ class MIAClient(MuseumAPIClient):
         commit_hash = result.stdout.strip()
         if self.progress_tracker:
             self.progress_tracker.state.repo_commit_hash = commit_hash
-            self.logger.info(f"Processing repository at commit {commit_hash[:8]}")
+            self.logger.progress(f"Processing repository at commit {commit_hash[:8]}")
 
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
         """
@@ -488,7 +572,7 @@ class MIAClient(MuseumAPIClient):
 
         for bucket_dir in bucket_dirs[start_bucket:]:
             bucket_num = int(bucket_dir.name)
-            self.logger.info(
+            self.logger.progress(
                 f"Processing bucket {bucket_num} ({bucket_num + 1}/{len(bucket_dirs)})"
             )
 

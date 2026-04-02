@@ -348,6 +348,21 @@ class ArtworkDownloader:
                     )
                     return None
 
+            # Calculate quality scores from metadata dimensions if not already set
+            # (covers metadata-only museums like MIA where pixel dims come from the API)
+            if (
+                artwork_metadata.quality_score is None
+                and artwork_metadata.image_pixel_width
+                and artwork_metadata.image_pixel_height
+                and artwork_metadata.image_pixel_width > 0
+                and artwork_metadata.image_pixel_height > 0
+            ):
+                quality_scores = calculate_quality_scores_for_all_displays(
+                    artwork_metadata.image_pixel_width, artwork_metadata.image_pixel_height
+                )
+                artwork_metadata.quality_scores = quality_scores
+                artwork_metadata.quality_score = calculate_average_quality_score(quality_scores)
+
             self.progress_tracker.log_status(artwork_metadata.id, "success")
             self.logger.artwork(f"Prepared artwork for batch: {artwork_info}")
 
