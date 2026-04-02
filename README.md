@@ -1,6 +1,6 @@
 # ArtServe Museum Collection Downloader
 
-A Python application for downloading and managing artwork metadata and images from major museum APIs, including the Art Institute of Chicago (AIC), Metropolitan Museum of Art (Met), and Cleveland Museum of Art (CMA).
+A Python application for downloading and managing artwork metadata and images from major museum APIs, including the Art Institute of Chicago (AIC), Metropolitan Museum of Art (Met), Cleveland Museum of Art (CMA), and Minneapolis Institute of Art (MIA).
 
 ## Features
 
@@ -149,6 +149,7 @@ uv run python main.py met aic
 - `aic` - Art Institute of Chicago
 - `met` - Metropolitan Museum of Art
 - `cma` - Cleveland Museum of Art
+- `mia` - Minneapolis Institute of Art (uses Playwright for CDN URL scraping — requires `playwright install chromium`)
 
 ### Monitor Progress
 
@@ -210,6 +211,12 @@ The downloader automatically filters for:
 **CMA Configuration:**
 - Uses data dump by default for faster processing
 - Filters for CC0 (public domain) works only
+
+**MIA Configuration:**
+- Clones/pulls the `artsmia/collection` git repository (~500MB)
+- Scrapes CDN image URLs from collection pages using Playwright (~5-7 seconds per artwork)
+- Filters for 2D artwork types (Paintings, Prints, Drawings, Photographs, Works on Paper)
+- Requires Playwright: `uv run playwright install chromium`
 
 ## Data Pipeline
 
@@ -363,6 +370,7 @@ This project is licensed under the MIT License.
 - [Art Institute of Chicago API](https://api.artic.edu/docs/)
 - [Metropolitan Museum API](https://metmuseum.github.io)
 - [Cleveland Museum of Art API](https://www.clevelandart.org/open-access-api)
+- [Minneapolis Institute of Art Collection](https://github.com/artsmia/collection)
 
 ## Contact
 
