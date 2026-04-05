@@ -71,16 +71,13 @@ def _wrap_list_records(record_xml: str, token: str = "", complete_size: int = 1)
         if token
         else f'<resumptionToken completeListSize="{complete_size}"/>'
     )
-    return textwrap.dedent(f"""\
-        <?xml version="1.0" encoding="UTF-8"?>
-        <OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">
-          <responseDate>2026-04-05T18:52:36Z</responseDate>
-          <ListRecords>
-            {record_xml}
-            {token_el}
-          </ListRecords>
-        </OAI-PMH>
-    """)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/">\n'
+        '  <responseDate>2024-01-01T00:00:00Z</responseDate>\n'
+        f'  <ListRecords>\n{record_xml}    {token_el}\n  </ListRecords>\n'
+        '</OAI-PMH>\n'
+    )
 
 
 # ── Task 1: _parse_dimensions_edm ─────────────────────────────────────────────
