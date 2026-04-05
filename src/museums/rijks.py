@@ -80,7 +80,7 @@ class RijksArtworkFactory(ArtworkMetadataFactory):
             year_late = dating.get("yearLate")
 
             dims = data.get("dimensions") or []
-            height_cm, width_cm, depth_cm = _parse_dimensions(dims)
+            height_cm, width_cm, depth_cm = None, None, None
 
             return ArtworkMetadata(
                 id=obj_num,
@@ -173,12 +173,12 @@ class RijksClient(MuseumAPIClient):
         return p
 
     def get_collection_info(self) -> Dict[str, Any]:
-        resp = self.session.get(RIJKS_API_URL, params=self._api_params({"ps": 1, "p": 1, "imgonly": "true"}))
+        resp = self.session.get(RIJKS_OAI_URL, params=self._api_params({"ps": 1, "p": 1, "imgonly": "true"}))
         resp.raise_for_status()
         return {"total_objects": resp.json().get("count", 0)}
 
     def _fetch_detail(self, object_number: str) -> Dict[str, Any]:
-        url = f"{RIJKS_API_URL}/{object_number}"
+        url = f"{RIJKS_OAI_URL}/{object_number}"
         resp = self.session.get(url, params=self._api_params())
         resp.raise_for_status()
         return resp.json().get("artObject") or {}
@@ -194,7 +194,7 @@ class RijksClient(MuseumAPIClient):
 
         while True:
             resp = self.session.get(
-                RIJKS_API_URL,
+                RIJKS_OAI_URL,
                 params=self._api_params({"ps": page_size, "p": page, "imgonly": "true", "s": "relevance"}),
             )
             resp.raise_for_status()
