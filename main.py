@@ -13,6 +13,7 @@ from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 from src.museums.mia import MIAClient, MIAImageProcessor, MIAProgressTracker
 from src.museums.smk import SMKClient, SMKImageProcessor, SMKProgressTracker
 from src.museums.nga import NGAClient, NGAImageProcessor, NGAProgressTracker
+from src.museums.wellcome import WellcomeClient, WellcomeImageProcessor, WellcomeProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 from src.utils import setup_logging
 
@@ -66,6 +67,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         "mia": "Minneapolis Institute of Art",
         "smk": "Statens Museum for Kunst",
         "nga": "National Gallery of Art",
+        "wellcome": "Wellcome Collection",
     }
 
     return MuseumInfo(
@@ -97,6 +99,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         "mia": {},  # MIA doesn't use query params (git repo)
         "smk": {},  # Filters are hardcoded in the search URL
         "nga": {},
+        "wellcome": {},
     }.get(museum_id, {})
 
     # Handle data dump configuration
@@ -173,6 +176,12 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "processor_class": NGAImageProcessor,
             "tracker_class": NGAProgressTracker,
             "data_dump_path": data_dump_path,
+        },
+        "wellcome": {
+            **base_config,
+            "client_class": WellcomeClient,
+            "processor_class": WellcomeImageProcessor,
+            "tracker_class": WellcomeProgressTracker,
         },
     }
 
@@ -267,14 +276,14 @@ def main():
     parser.add_argument(
         "museums",
         nargs="*",
-        choices=["aic", "met", "cma", "mia", "smk", "nga"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome"],
         help="Museum IDs to download. If not provided, downloads from all museums",
     )
     parser.add_argument(
         "--museum",
         "-m",
         dest="museum_flag",
-        choices=["aic", "met", "cma", "mia", "smk", "nga"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome"],
         help="Single museum to download (alternative to positional argument)",
     )
     parser.add_argument(

@@ -23,6 +23,10 @@ def __getattr__(name):
         from .nga import NGAClient, NGAImageProcessor, NGAProgressTracker
 
         return locals()[name]
+    elif name in ("WellcomeClient", "WellcomeImageProcessor", "WellcomeProgressTracker"):
+        from .wellcome import WellcomeClient, WellcomeImageProcessor, WellcomeProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -53,6 +57,9 @@ __all__ = [
     "NGAClient",
     "NGAImageProcessor",
     "NGAProgressTracker",
+    "WellcomeClient",
+    "WellcomeImageProcessor",
+    "WellcomeProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",
