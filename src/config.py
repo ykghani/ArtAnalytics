@@ -181,6 +181,13 @@ class Settings(BaseSettings):
         env="MIA_USER_AGENT"
     )
 
+    smk_api_base_url: str = Field(
+        default="https://api.smk.dk/api/v1",
+        env="SMK_API_BASE_URL",
+    )
+    smk_user_agent: str = Field(default="SMK-ArtDownloadBot/1.0", env="SMK_USER_AGENT")
+    smk_rate_limit: float = Field(default=1.0, env="SMK_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -237,6 +244,14 @@ class Settings(BaseSettings):
                 use_data_dump=True,  # Always use git repo
                 data_dump_path=self.data_dir / self.mia_repo_path,
             ),
+            "smk": MuseumConfig(
+                api_base_url=self.smk_api_base_url,
+                user_agent=self.smk_user_agent,
+                rate_limit=self.smk_rate_limit,
+                contact_email=self.default_contact_email,
+                code="smk",
+                name=SHARED_MUSEUMS["smk"].name,
+            ),
         }
 
     # File System Configuration
@@ -282,6 +297,7 @@ class Settings(BaseSettings):
             "met": self.data_dir / "met",
             "cma": self.data_dir / "cma",
             "mia": self.data_dir / "mia",
+            "smk": self.data_dir / "smk",
         }
 
         for museum, base_dir in self.museum_dirs.items():

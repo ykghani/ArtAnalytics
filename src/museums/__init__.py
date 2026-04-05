@@ -11,6 +11,14 @@ def __getattr__(name):
         from .cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 
         return locals()[name]
+    elif name in ("MIAClient", "MIAImageProcessor", "MIAProgressTracker"):
+        from .mia import MIAClient, MIAImageProcessor, MIAProgressTracker
+
+        return locals()[name]
+    elif name in ("SMKClient", "SMKImageProcessor", "SMKProgressTracker"):
+        from .smk import SMKClient, SMKImageProcessor, SMKProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -32,6 +40,12 @@ __all__ = [
     "CMAClient",
     "CMAImageProcessor",
     "CMAProgressTracker",
+    "MIAClient",
+    "MIAImageProcessor",
+    "MIAProgressTracker",
+    "SMKClient",
+    "SMKImageProcessor",
+    "SMKProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",
