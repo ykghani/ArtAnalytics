@@ -12,6 +12,7 @@ from src.museums.met import MetClient, MetImageProcessor, MetProgressTracker
 from src.museums.cma import CMAClient, CMAImageProcessor, CMAProgressTracker
 from src.museums.mia import MIAClient, MIAImageProcessor, MIAProgressTracker
 from src.museums.smk import SMKClient, SMKImageProcessor, SMKProgressTracker
+from src.museums.nga import NGAClient, NGAImageProcessor, NGAProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 from src.utils import setup_logging
 
@@ -64,6 +65,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         "cma": "Cleveland Museum of Art",
         "mia": "Minneapolis Institute of Art",
         "smk": "Statens Museum for Kunst",
+        "nga": "National Gallery of Art",
     }
 
     return MuseumInfo(
@@ -94,6 +96,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         "cma": settings.museum_queries.get_cma_params(),
         "mia": {},  # MIA doesn't use query params (git repo)
         "smk": {},  # Filters are hardcoded in the search URL
+        "nga": {},
     }.get(museum_id, {})
 
     # Handle data dump configuration
@@ -104,6 +107,8 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             data_dump_path = (
                 settings.data_dir / "artic-api-data" / "AIC_json" / "artworks"
             )
+        elif museum_id == "nga":
+            data_dump_path = settings.data_dir / "nga" / "csvs"
         else:
             data_dump_path = museum_config.data_dump_path
 
@@ -161,6 +166,13 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "client_class": SMKClient,
             "processor_class": SMKImageProcessor,
             "tracker_class": SMKProgressTracker,
+        },
+        "nga": {
+            **base_config,
+            "client_class": NGAClient,
+            "processor_class": NGAImageProcessor,
+            "tracker_class": NGAProgressTracker,
+            "data_dump_path": data_dump_path,
         },
     }
 
@@ -255,14 +267,14 @@ def main():
     parser.add_argument(
         "museums",
         nargs="*",
-        choices=["aic", "met", "cma", "mia", "smk"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga"],
         help="Museum IDs to download. If not provided, downloads from all museums",
     )
     parser.add_argument(
         "--museum",
         "-m",
         dest="museum_flag",
-        choices=["aic", "met", "cma", "mia", "smk"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga"],
         help="Single museum to download (alternative to positional argument)",
     )
     parser.add_argument(

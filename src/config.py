@@ -188,6 +188,9 @@ class Settings(BaseSettings):
     smk_user_agent: str = Field(default="SMK-ArtDownloadBot/1.0", env="SMK_USER_AGENT")
     smk_rate_limit: float = Field(default=1.0, env="SMK_RATE_LIMIT")
 
+    nga_user_agent: str = Field(default="NGA-ArtDownloadBot/1.0", env="NGA_USER_AGENT")
+    nga_rate_limit: float = Field(default=5.0, env="NGA_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -252,6 +255,16 @@ class Settings(BaseSettings):
                 code="smk",
                 name=SHARED_MUSEUMS["smk"].name,
             ),
+            "nga": MuseumConfig(
+                api_base_url="https://api.nga.gov/iiif",
+                user_agent=self.nga_user_agent,
+                rate_limit=self.nga_rate_limit,
+                contact_email=self.default_contact_email,
+                code="nga",
+                name=SHARED_MUSEUMS["nga"].name,
+                use_data_dump=True,
+                data_dump_path=self.data_dir / "nga" / "csvs",
+            ),
         }
 
     # File System Configuration
@@ -298,6 +311,7 @@ class Settings(BaseSettings):
             "cma": self.data_dir / "cma",
             "mia": self.data_dir / "mia",
             "smk": self.data_dir / "smk",
+            "nga": self.data_dir / "nga",
         }
 
         for museum, base_dir in self.museum_dirs.items():

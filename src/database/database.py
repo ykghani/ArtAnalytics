@@ -52,6 +52,7 @@ class Database:
             {"code": "cma", "name": "Cleveland Museum of Art"},
             {"code": "mia", "name": "Minneapolis Institute of Art"},
             {"code": "smk", "name": "Statens Museum for Kunst"},
+            {"code": "nga", "name": "National Gallery of Art"},
         ]
 
         for museum_data in museums:

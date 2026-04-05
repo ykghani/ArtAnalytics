@@ -19,6 +19,10 @@ def __getattr__(name):
         from .smk import SMKClient, SMKImageProcessor, SMKProgressTracker
 
         return locals()[name]
+    elif name in ("NGAClient", "NGAImageProcessor", "NGAProgressTracker"):
+        from .nga import NGAClient, NGAImageProcessor, NGAProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -46,6 +50,9 @@ __all__ = [
     "SMKClient",
     "SMKImageProcessor",
     "SMKProgressTracker",
+    "NGAClient",
+    "NGAImageProcessor",
+    "NGAProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",
