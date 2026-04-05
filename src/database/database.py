@@ -50,6 +50,13 @@ class Database:
             {"code": "met", "name": "Metropolitan Museum of Art"},
             {"code": "aic", "name": "Art Institute of Chicago"},
             {"code": "cma", "name": "Cleveland Museum of Art"},
+            {"code": "mia", "name": "Minneapolis Institute of Art"},
+            {"code": "smk", "name": "Statens Museum for Kunst"},
+            {"code": "nga", "name": "National Gallery of Art"},
+            {"code": "wellcome", "name": "Wellcome Collection"},
+            {"code": "loc", "name": "Library of Congress"},
+            {"code": "rijks", "name": "Rijksmuseum"},
+            {"code": "tepapa", "name": "Museum of New Zealand Te Papa Tongarewa"},
         ]
 
         for museum_data in museums:

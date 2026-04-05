@@ -181,6 +181,30 @@ class Settings(BaseSettings):
         env="MIA_USER_AGENT"
     )
 
+    smk_api_base_url: str = Field(
+        default="https://api.smk.dk/api/v1",
+        env="SMK_API_BASE_URL",
+    )
+    smk_user_agent: str = Field(default="SMK-ArtDownloadBot/1.0", env="SMK_USER_AGENT")
+    smk_rate_limit: float = Field(default=1.0, env="SMK_RATE_LIMIT")
+
+    nga_user_agent: str = Field(default="NGA-ArtDownloadBot/1.0", env="NGA_USER_AGENT")
+    nga_rate_limit: float = Field(default=5.0, env="NGA_RATE_LIMIT")
+
+    wellcome_user_agent: str = Field(default="Wellcome-ArtDownloadBot/1.0", env="WELLCOME_USER_AGENT")
+    wellcome_rate_limit: float = Field(default=1.0, env="WELLCOME_RATE_LIMIT")
+
+    loc_user_agent: str = Field(default="LOC-ArtDownloadBot/1.0", env="LOC_USER_AGENT")
+    loc_rate_limit: float = Field(default=0.5, env="LOC_RATE_LIMIT")
+
+    rijks_api_key: Optional[str] = Field(default=None, env="RIJKS_API_KEY")
+    rijks_user_agent: str = Field(default="Rijks-ArtDownloadBot/1.0", env="RIJKS_USER_AGENT")
+    rijks_rate_limit: float = Field(default=1.0, env="RIJKS_RATE_LIMIT")
+
+    tepapa_api_key: Optional[str] = Field(default=None, env="TEPAPA_API_KEY")
+    tepapa_user_agent: str = Field(default="TePapa-ArtDownloadBot/1.0", env="TEPAPA_USER_AGENT")
+    tepapa_rate_limit: float = Field(default=0.2, env="TEPAPA_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -237,6 +261,58 @@ class Settings(BaseSettings):
                 use_data_dump=True,  # Always use git repo
                 data_dump_path=self.data_dir / self.mia_repo_path,
             ),
+            "smk": MuseumConfig(
+                api_base_url=self.smk_api_base_url,
+                user_agent=self.smk_user_agent,
+                rate_limit=self.smk_rate_limit,
+                contact_email=self.default_contact_email,
+                code="smk",
+                name=SHARED_MUSEUMS["smk"].name,
+            ),
+            "nga": MuseumConfig(
+                api_base_url="https://api.nga.gov/iiif",
+                user_agent=self.nga_user_agent,
+                rate_limit=self.nga_rate_limit,
+                contact_email=self.default_contact_email,
+                code="nga",
+                name=SHARED_MUSEUMS["nga"].name,
+                use_data_dump=True,
+                data_dump_path=self.data_dir / "nga" / "csvs",
+            ),
+            "wellcome": MuseumConfig(
+                api_base_url="https://api.wellcomecollection.org/catalogue/v2",
+                user_agent=self.wellcome_user_agent,
+                rate_limit=self.wellcome_rate_limit,
+                contact_email=self.default_contact_email,
+                code="wellcome",
+                name=SHARED_MUSEUMS["wellcome"].name,
+            ),
+            "loc": MuseumConfig(
+                api_base_url="https://www.loc.gov/pictures",
+                user_agent=self.loc_user_agent,
+                rate_limit=self.loc_rate_limit,
+                contact_email=self.default_contact_email,
+                code="loc",
+                name=SHARED_MUSEUMS["loc"].name,
+            ),
+            "rijks": MuseumConfig(
+                api_base_url="https://www.rijksmuseum.nl/api/nl/collection",
+                user_agent=self.rijks_user_agent,
+                rate_limit=self.rijks_rate_limit,
+                contact_email=self.default_contact_email,
+                code="rijks",
+                name=SHARED_MUSEUMS["rijks"].name,
+                api_key=self.rijks_api_key,
+            ),
+            "tepapa": MuseumConfig(
+                api_base_url="https://data.tepapa.govt.nz/collection",
+                user_agent=self.tepapa_user_agent,
+                rate_limit=self.tepapa_rate_limit,
+                contact_email=self.default_contact_email,
+                code="tepapa",
+                name=SHARED_MUSEUMS["tepapa"].name,
+                api_key=self.tepapa_api_key,
+            ),
         }
 
     # File System Configuration
@@ -282,6 +358,12 @@ class Settings(BaseSettings):
             "met": self.data_dir / "met",
             "cma": self.data_dir / "cma",
             "mia": self.data_dir / "mia",
+            "smk": self.data_dir / "smk",
+            "nga": self.data_dir / "nga",
+            "wellcome": self.data_dir / "wellcome",
+            "loc": self.data_dir / "loc",
+            "rijks": self.data_dir / "rijks",
+            "tepapa": self.data_dir / "tepapa",
         }
 
         for museum, base_dir in self.museum_dirs.items():

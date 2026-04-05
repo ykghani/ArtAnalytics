@@ -69,4 +69,4 @@ __pycache__/
 poetry.lock.env
 
 #Any generated images
-*.png
+*.png.worktrees/
