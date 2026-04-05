@@ -1,13 +1,14 @@
 """Rijksmuseum Amsterdam museum client.
 
-API: https://www.rijksmuseum.nl/api/nl/collection
-  - Requires free Rijksstudio API key: https://www.rijksmuseum.nl/en/rijksstudio/
-  - Set env var: RIJKS_API_KEY=your_key
-  - All 360 K+ CC0 artworks are public domain (filter: imgonly=True)
-  - Image URL: webImage.url + "=s0"  (Google Arts & Culture max resolution)
-  - Detail endpoint: /api/nl/collection/{objectNumber}?apikey={key}
+API: OAI-PMH  https://data.rijksmuseum.nl/oai
+  - No API key required
+  - metadataPrefix: edm (EDM/RDF-XML)
+  - Pagination via resumption tokens (non-expiring)
+  - Rights filter: publicdomain / CC0 only
 """
+import re
 import time
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
@@ -21,28 +22,41 @@ from ..config import settings
 from ..download.progress_tracker import BaseProgressTracker
 from ..utils import sanitize_filename, setup_logging
 
-RIJKS_API_URL = "https://www.rijksmuseum.nl/api/nl/collection"
+RIJKS_OAI_URL = "https://data.rijksmuseum.nl/oai"
+
+NS = {
+    'oai':     'http://www.openarchives.org/OAI/2.0/',
+    'dc':      'http://purl.org/dc/elements/1.1/',
+    'dcterms': 'http://purl.org/dc/terms/',
+    'edm':     'http://www.europeana.eu/schemas/edm/',
+    'ore':     'http://www.openarchives.org/ore/terms/',
+    'rdf':     'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+    'skos':    'http://www.w3.org/2004/02/skos/core#',
+}
+
+_DIM_RE = re.compile(
+    r'height\s+([\d.]+)\s*cm'
+    r'|'
+    r'width\s+([\d.]+)\s*cm',
+    re.IGNORECASE,
+)
 
 
-def _parse_dimensions(dims: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
-    """Return (height_cm, width_cm, depth_cm) from Rijksmuseum dimensions list."""
-    h = w = d = None
-    for dim in dims or []:
-        unit = dim.get("unit", "").lower()
-        dim_type = dim.get("type", "").lower()
-        try:
-            value = float(dim.get("value", ""))
-        except (TypeError, ValueError):
-            continue
-        if unit == "mm":
-            value /= 10
-        if dim_type == "height":
-            h = value
-        elif dim_type == "width":
-            w = value
-        elif dim_type == "depth":
-            d = value
-    return h, w, d
+def _parse_dimensions_edm(extent: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
+    """Parse 'height 363 cm × width 437 cm' → (363.0, 437.0).
+
+    Returns (height_cm, width_cm). Either value is None when not found.
+    Only centimetre values are recognised; 'mm' strings return (None, None).
+    """
+    if not extent:
+        return None, None
+    h = w = None
+    for m in _DIM_RE.finditer(extent):
+        if m.group(1) is not None:
+            h = float(m.group(1))
+        elif m.group(2) is not None:
+            w = float(m.group(2))
+    return h, w
 
 
 class RijksArtworkFactory(ArtworkMetadataFactory):
