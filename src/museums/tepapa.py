@@ -24,16 +24,16 @@ from ..utils import sanitize_filename, setup_logging
 TEPAPA_SEARCH_URL = "https://data.tepapa.govt.nz/collection/search"
 
 
-def _extract_downloadable_media(representations: List[Dict]) -> Optional[Dict]:
+def _extract_downloadable_media(representations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Return first representation where rights.allowsDownload is True."""
     for rep in representations or []:
         rights = rep.get("rights") or {}
         if rights.get("allowsDownload"):
-            return rep.get("media") or {}
+            return rep.get("media") or None
     return None
 
 
-def _extract_artist(production: List[Dict]) -> str:
+def _extract_artist(production: List[Dict[str, Any]]) -> str:
     if not production:
         return "Unknown Artist"
     first = production[0]
@@ -41,7 +41,7 @@ def _extract_artist(production: List[Dict]) -> str:
     return contributor.get("title", "Unknown Artist") or "Unknown Artist"
 
 
-def _extract_license(representations: List[Dict]) -> str:
+def _extract_license(representations: List[Dict[str, Any]]) -> str:
     for rep in representations or []:
         rights = rep.get("rights") or {}
         rt = rights.get("rightsType") or {}
@@ -203,7 +203,9 @@ class TePapaClient(MuseumAPIClient):
         yield from self._process_page(items)
         offset += page_size
 
-        items_processed = page_size
+        if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
+            self.progress_tracker.state.last_from = offset
+            self.progress_tracker._save_progress()
 
         while offset < total:
             body = {
@@ -222,15 +224,10 @@ class TePapaClient(MuseumAPIClient):
 
             yield from self._process_page(items)
             offset += page_size
-            items_processed += page_size
 
             if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
                 self.progress_tracker.state.last_from = offset
-
-            # Save checkpoint every 1000 items
-            if items_processed % 1000 == 0:
-                if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
-                    self.progress_tracker._save_progress()
+                self.progress_tracker._save_progress()
 
             self.logger.progress(f"Te Papa pagination: processed up to offset {offset}/{total}")
             time.sleep(self.museum_info.rate_limit)
