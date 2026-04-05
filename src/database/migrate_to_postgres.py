@@ -25,6 +25,7 @@ ALL_MUSEUMS = [
     {"code": "aic", "name": "Art Institute of Chicago"},
     {"code": "cma", "name": "Cleveland Museum of Art"},
     {"code": "mia", "name": "Minneapolis Institute of Art"},
+    {"code": "smk", "name": "Statens Museum for Kunst"}
 ]
 
 
