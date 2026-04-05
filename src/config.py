@@ -194,6 +194,9 @@ class Settings(BaseSettings):
     wellcome_user_agent: str = Field(default="Wellcome-ArtDownloadBot/1.0", env="WELLCOME_USER_AGENT")
     wellcome_rate_limit: float = Field(default=1.0, env="WELLCOME_RATE_LIMIT")
 
+    loc_user_agent: str = Field(default="LOC-ArtDownloadBot/1.0", env="LOC_USER_AGENT")
+    loc_rate_limit: float = Field(default=0.5, env="LOC_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -276,6 +279,14 @@ class Settings(BaseSettings):
                 code="wellcome",
                 name=SHARED_MUSEUMS["wellcome"].name,
             ),
+            "loc": MuseumConfig(
+                api_base_url="https://www.loc.gov/pictures",
+                user_agent=self.loc_user_agent,
+                rate_limit=self.loc_rate_limit,
+                contact_email=self.default_contact_email,
+                code="loc",
+                name=SHARED_MUSEUMS["loc"].name,
+            ),
         }
 
     # File System Configuration
@@ -324,6 +335,7 @@ class Settings(BaseSettings):
             "smk": self.data_dir / "smk",
             "nga": self.data_dir / "nga",
             "wellcome": self.data_dir / "wellcome",
+            "loc": self.data_dir / "loc",
         }
 
         for museum, base_dir in self.museum_dirs.items():
