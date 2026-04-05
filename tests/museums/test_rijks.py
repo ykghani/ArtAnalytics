@@ -114,3 +114,70 @@ def test_parse_dimensions_mm_units():
     h, w = _parse_dimensions_edm("height 100 mm \u00d7 width 200 mm")
     assert h is None
     assert w is None
+
+
+# ── Task 3: _is_public_domain_rights  and  _xml_record_to_dict ───────────────
+
+from src.museums.rijks import _is_public_domain_rights, _xml_record_to_dict
+
+
+def test_is_public_domain_zero():
+    assert _is_public_domain_rights("https://creativecommons.org/publicdomain/zero/1.0/") is True
+
+
+def test_is_public_domain_mark():
+    assert _is_public_domain_rights("https://creativecommons.org/publicdomain/mark/1.0/") is True
+
+
+def test_is_public_domain_cc_by():
+    assert _is_public_domain_rights("https://creativecommons.org/licenses/by/4.0/") is False
+
+
+def test_is_public_domain_empty():
+    assert _is_public_domain_rights("") is False
+
+
+def test_is_public_domain_none():
+    assert _is_public_domain_rights(None) is False
+
+
+def test_xml_record_to_dict_full():
+    root = ET.fromstring(SAMPLE_RECORD_XML)
+    d = _xml_record_to_dict(root)
+
+    assert d["oai_identifier"] == "https://id.rijksmuseum.nl/200064126"
+    assert d["accession_number"] == "SK-A-3262"
+    assert d["title"] == "Night Watch"
+    assert d["artist"] == "Rembrandt van Rijn"
+    assert d["date_display"] == "1642"
+    assert d["image_url"] == "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg"
+    assert d["rights_uri"] == "https://creativecommons.org/publicdomain/zero/1.0/"
+    assert d["is_public_domain"] is True
+    assert d["height_cm"] == 363.0
+    assert d["width_cm"] == 437.0
+    assert d["description"] == "Famous Dutch painting."
+    assert d["artwork_type"] == "painting"
+
+
+def test_xml_record_to_dict_no_artist_agent():
+    xml = SAMPLE_RECORD_XML.replace(
+        '      <edm:Agent rdf:about="https://id.rijksmuseum.nl/21029638">\n'
+        '        <skos:prefLabel>Rembrandt van Rijn</skos:prefLabel>\n'
+        '      </edm:Agent>',
+        "",
+    )
+    root = ET.fromstring(xml)
+    d = _xml_record_to_dict(root)
+    assert d["artist"] == ""
+
+
+def test_xml_record_to_dict_no_image():
+    root = ET.fromstring(SAMPLE_RECORD_NO_IMAGE_XML)
+    d = _xml_record_to_dict(root)
+    assert d["image_url"] is None
+
+
+def test_xml_record_to_dict_restricted():
+    root = ET.fromstring(SAMPLE_RECORD_RESTRICTED_XML)
+    d = _xml_record_to_dict(root)
+    assert d["is_public_domain"] is False

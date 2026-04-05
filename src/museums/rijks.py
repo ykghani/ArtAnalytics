@@ -59,6 +59,89 @@ def _parse_dimensions_edm(extent: Optional[str]) -> Tuple[Optional[float], Optio
     return h, w
 
 
+def _is_public_domain_rights(rights_uri: Optional[str]) -> bool:
+    """Return True when the EDM rights URI indicates public domain / CC0."""
+    if not rights_uri:
+        return False
+    return "publicdomain" in rights_uri or "/zero/" in rights_uri
+
+
+def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
+    """Parse a single OAI <record> element into a plain dict for the factory."""
+    # ── OAI header ────────────────────────────────────────────────────────────
+    header = record_el.find("oai:header", NS)
+    oai_id = ""
+    if header is not None:
+        id_el = header.find("oai:identifier", NS)
+        oai_id = (id_el.text or "").strip() if id_el is not None else ""
+
+    # ── Locate rdf:RDF ────────────────────────────────────────────────────────
+    meta = record_el.find("oai:metadata", NS)
+    rdf = meta.find("rdf:RDF", NS) if meta is not None else None
+    if rdf is None:
+        return {"oai_identifier": oai_id}
+
+    # ── ore:Aggregation ───────────────────────────────────────────────────────
+    agg = rdf.find("ore:Aggregation", NS)
+    image_url = None
+    rights_uri = ""
+    if agg is not None:
+        shown_by = agg.find("edm:isShownBy", NS)
+        if shown_by is not None:
+            image_url = shown_by.get(f"{{{NS['rdf']}}}resource")
+        rights_el = agg.find("edm:rights", NS)
+        if rights_el is not None:
+            rights_uri = rights_el.get(f"{{{NS['rdf']}}}resource", "")
+
+    # ── edm:ProvidedCHO ───────────────────────────────────────────────────────
+    cho = rdf.find("edm:ProvidedCHO", NS)
+    accession_number = title = date_display = description = artwork_type = ""
+    creator_uri = None
+    extent_text = None
+    if cho is not None:
+        def _t(tag):
+            el = cho.find(tag, NS)
+            return (el.text or "").strip() if el is not None else ""
+        accession_number = _t("dc:identifier")
+        title            = _t("dc:title")
+        date_display     = _t("dcterms:created")
+        description      = _t("dc:description")
+        artwork_type     = _t("dc:type")
+        creator_el = cho.find("dc:creator", NS)
+        if creator_el is not None:
+            creator_uri = creator_el.get(f"{{{NS['rdf']}}}resource")
+        extent_el = cho.find("dcterms:extent", NS)
+        if extent_el is not None:
+            extent_text = (extent_el.text or "").strip()
+
+    # ── Resolve artist from edm:Agent ─────────────────────────────────────────
+    artist = ""
+    if creator_uri:
+        for agent in rdf.findall("edm:Agent", NS):
+            if agent.get(f"{{{NS['rdf']}}}about") == creator_uri:
+                label_el = agent.find("skos:prefLabel", NS)
+                if label_el is not None:
+                    artist = (label_el.text or "").strip()
+                break
+
+    height_cm, width_cm = _parse_dimensions_edm(extent_text)
+
+    return {
+        "oai_identifier":   oai_id,
+        "accession_number": accession_number,
+        "title":            title,
+        "artist":           artist,
+        "date_display":     date_display,
+        "description":      description or None,
+        "artwork_type":     artwork_type or None,
+        "image_url":        image_url,
+        "rights_uri":       rights_uri,
+        "is_public_domain": _is_public_domain_rights(rights_uri),
+        "height_cm":        height_cm,
+        "width_cm":         width_cm,
+    }
+
+
 class RijksArtworkFactory(ArtworkMetadataFactory):
     def __init__(self):
         super().__init__("rijks")
