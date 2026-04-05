@@ -197,6 +197,10 @@ class Settings(BaseSettings):
     loc_user_agent: str = Field(default="LOC-ArtDownloadBot/1.0", env="LOC_USER_AGENT")
     loc_rate_limit: float = Field(default=0.5, env="LOC_RATE_LIMIT")
 
+    rijks_api_key: Optional[str] = Field(default=None, env="RIJKS_API_KEY")
+    rijks_user_agent: str = Field(default="Rijks-ArtDownloadBot/1.0", env="RIJKS_USER_AGENT")
+    rijks_rate_limit: float = Field(default=1.0, env="RIJKS_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -287,6 +291,15 @@ class Settings(BaseSettings):
                 code="loc",
                 name=SHARED_MUSEUMS["loc"].name,
             ),
+            "rijks": MuseumConfig(
+                api_base_url="https://www.rijksmuseum.nl/api/nl/collection",
+                user_agent=self.rijks_user_agent,
+                rate_limit=self.rijks_rate_limit,
+                contact_email=self.default_contact_email,
+                code="rijks",
+                name=SHARED_MUSEUMS["rijks"].name,
+                api_key=self.rijks_api_key,
+            ),
         }
 
     # File System Configuration
@@ -336,6 +349,7 @@ class Settings(BaseSettings):
             "nga": self.data_dir / "nga",
             "wellcome": self.data_dir / "wellcome",
             "loc": self.data_dir / "loc",
+            "rijks": self.data_dir / "rijks",
         }
 
         for museum, base_dir in self.museum_dirs.items():

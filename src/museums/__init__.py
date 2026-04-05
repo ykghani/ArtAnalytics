@@ -31,6 +31,10 @@ def __getattr__(name):
         from .loc import LOCClient, LOCImageProcessor, LOCProgressTracker
 
         return locals()[name]
+    elif name in ("RijksClient", "RijksImageProcessor", "RijksProgressTracker"):
+        from .rijks import RijksClient, RijksImageProcessor, RijksProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -67,6 +71,9 @@ __all__ = [
     "LOCClient",
     "LOCImageProcessor",
     "LOCProgressTracker",
+    "RijksClient",
+    "RijksImageProcessor",
+    "RijksProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",

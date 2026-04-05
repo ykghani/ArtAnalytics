@@ -55,6 +55,7 @@ class Database:
             {"code": "nga", "name": "National Gallery of Art"},
             {"code": "wellcome", "name": "Wellcome Collection"},
             {"code": "loc", "name": "Library of Congress"},
+            {"code": "rijks", "name": "Rijksmuseum"},
         ]
 
         for museum_data in museums:
