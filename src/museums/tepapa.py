@@ -21,9 +21,6 @@ from ..config import settings
 from ..download.progress_tracker import BaseProgressTracker
 from ..utils import sanitize_filename, setup_logging
 
-TEPAPA_SEARCH_URL = "https://data.tepapa.govt.nz/collection/search"
-
-
 def _extract_downloadable_media(representations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Return first representation where rights.allowsDownload is True."""
     for rep in representations or []:
@@ -166,7 +163,7 @@ class TePapaClient(MuseumAPIClient):
 
     def get_collection_info(self) -> Dict[str, Any]:
         body = {"query": "", "size": 1, "from": 0}
-        resp = self.session.post(TEPAPA_SEARCH_URL, json=body, timeout=30)
+        resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
         resp.raise_for_status()
         meta = resp.json().get("_metadata") or {}
         total = (meta.get("resultset") or {}).get("count", 0)
@@ -189,7 +186,7 @@ class TePapaClient(MuseumAPIClient):
                 {"field": "hasRepresentation.rights.allowsDownload", "keyword": "true"}
             ],
         }
-        resp = self.session.post(TEPAPA_SEARCH_URL, json=body, timeout=30)
+        resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
         resp.raise_for_status()
         data = resp.json()
 
@@ -216,7 +213,7 @@ class TePapaClient(MuseumAPIClient):
                     {"field": "hasRepresentation.rights.allowsDownload", "keyword": "true"}
                 ],
             }
-            resp = self.session.post(TEPAPA_SEARCH_URL, json=body, timeout=30)
+            resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
             resp.raise_for_status()
             items = resp.json().get("results") or []
             if not items:
