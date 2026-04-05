@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 from PIL import Image
 
@@ -24,7 +24,7 @@ from ..utils import sanitize_filename, setup_logging
 RIJKS_API_URL = "https://www.rijksmuseum.nl/api/nl/collection"
 
 
-def _parse_dimensions(dims: List[Dict]) -> tuple:
+def _parse_dimensions(dims: List[Dict[str, Any]]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
     """Return (height_cm, width_cm, depth_cm) from Rijksmuseum dimensions list."""
     h = w = d = None
     for dim in dims or []:
@@ -136,9 +136,14 @@ class RijksClient(MuseumAPIClient):
         museum_info: MuseumInfo,
         api_key: Optional[str] = None,
         cache_file: Optional[Path] = None,
-        progress_tracker: Optional[RijksProgressTracker] = None,
+        progress_tracker: Optional[BaseProgressTracker] = None,
     ):
         self._rijks_api_key = api_key
+        if not self._rijks_api_key:
+            raise ValueError(
+                "Rijksmuseum API key is required. Set RIJKS_API_KEY in your .env file. "
+                "Get a free key at https://www.rijksmuseum.nl/en/rijksstudio/"
+            )
         super().__init__(museum_info=museum_info, api_key=None, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = RijksArtworkFactory()
@@ -154,7 +159,7 @@ class RijksClient(MuseumAPIClient):
         return p
 
     def get_collection_info(self) -> Dict[str, Any]:
-        resp = self.session.get(RIJKS_API_URL, params=self._api_params({"ps": 1, "p": 1, "imgonly": "True"}))
+        resp = self.session.get(RIJKS_API_URL, params=self._api_params({"ps": 1, "p": 1, "imgonly": "true"}))
         resp.raise_for_status()
         return {"total_objects": resp.json().get("count", 0)}
 
@@ -176,7 +181,7 @@ class RijksClient(MuseumAPIClient):
         while True:
             resp = self.session.get(
                 RIJKS_API_URL,
-                params=self._api_params({"ps": page_size, "p": page, "imgonly": "True", "s": "relevance"}),
+                params=self._api_params({"ps": page_size, "p": page, "imgonly": "true", "s": "relevance"}),
             )
             resp.raise_for_status()
             body = resp.json()
@@ -202,12 +207,12 @@ class RijksClient(MuseumAPIClient):
                 if metadata:
                     yield metadata
 
-                time.sleep(0.1)
+                time.sleep(self.museum_info.rate_limit)
 
             page += 1
             if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
                 self.progress_tracker.state.last_page = page
-                self.progress_tracker.force_save()
+                self.progress_tracker._save_progress()
 
             self.logger.progress(f"Rijksmuseum: page {page}")
             time.sleep(self.museum_info.rate_limit)
