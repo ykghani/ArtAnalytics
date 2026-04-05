@@ -19,6 +19,26 @@ def __getattr__(name):
         from .smk import SMKClient, SMKImageProcessor, SMKProgressTracker
 
         return locals()[name]
+    elif name in ("NGAClient", "NGAImageProcessor", "NGAProgressTracker"):
+        from .nga import NGAClient, NGAImageProcessor, NGAProgressTracker
+
+        return locals()[name]
+    elif name in ("WellcomeClient", "WellcomeImageProcessor", "WellcomeProgressTracker"):
+        from .wellcome import WellcomeClient, WellcomeImageProcessor, WellcomeProgressTracker
+
+        return locals()[name]
+    elif name in ("LOCClient", "LOCImageProcessor", "LOCProgressTracker"):
+        from .loc import LOCClient, LOCImageProcessor, LOCProgressTracker
+
+        return locals()[name]
+    elif name in ("RijksClient", "RijksImageProcessor", "RijksProgressTracker"):
+        from .rijks import RijksClient, RijksImageProcessor, RijksProgressTracker
+
+        return locals()[name]
+    elif name in ("TePapaClient", "TePapaImageProcessor", "TePapaProgressTracker"):
+        from .tepapa import TePapaClient, TePapaImageProcessor, TePapaProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -46,6 +66,21 @@ __all__ = [
     "SMKClient",
     "SMKImageProcessor",
     "SMKProgressTracker",
+    "NGAClient",
+    "NGAImageProcessor",
+    "NGAProgressTracker",
+    "WellcomeClient",
+    "WellcomeImageProcessor",
+    "WellcomeProgressTracker",
+    "LOCClient",
+    "LOCImageProcessor",
+    "LOCProgressTracker",
+    "RijksClient",
+    "RijksImageProcessor",
+    "RijksProgressTracker",
+    "TePapaClient",
+    "TePapaImageProcessor",
+    "TePapaProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",
