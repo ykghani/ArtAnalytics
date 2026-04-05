@@ -35,6 +35,10 @@ def __getattr__(name):
         from .rijks import RijksClient, RijksImageProcessor, RijksProgressTracker
 
         return locals()[name]
+    elif name in ("TePapaClient", "TePapaImageProcessor", "TePapaProgressTracker"):
+        from .tepapa import TePapaClient, TePapaImageProcessor, TePapaProgressTracker
+
+        return locals()[name]
     elif name in ("MuseumAPIClient", "MuseumImageProcessor"):
         from .base import MuseumAPIClient, MuseumImageProcessor
 
@@ -74,6 +78,9 @@ __all__ = [
     "RijksClient",
     "RijksImageProcessor",
     "RijksProgressTracker",
+    "TePapaClient",
+    "TePapaImageProcessor",
+    "TePapaProgressTracker",
     "MuseumAPIClient",
     "MuseumImageProcessor",
     "ArtworkMetadata",

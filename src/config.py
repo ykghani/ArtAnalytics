@@ -201,6 +201,10 @@ class Settings(BaseSettings):
     rijks_user_agent: str = Field(default="Rijks-ArtDownloadBot/1.0", env="RIJKS_USER_AGENT")
     rijks_rate_limit: float = Field(default=1.0, env="RIJKS_RATE_LIMIT")
 
+    tepapa_api_key: Optional[str] = Field(default=None, env="TEPAPA_API_KEY")
+    tepapa_user_agent: str = Field(default="TePapa-ArtDownloadBot/1.0", env="TEPAPA_USER_AGENT")
+    tepapa_rate_limit: float = Field(default=0.2, env="TEPAPA_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -300,6 +304,15 @@ class Settings(BaseSettings):
                 name=SHARED_MUSEUMS["rijks"].name,
                 api_key=self.rijks_api_key,
             ),
+            "tepapa": MuseumConfig(
+                api_base_url="https://data.tepapa.govt.nz/collection",
+                user_agent=self.tepapa_user_agent,
+                rate_limit=self.tepapa_rate_limit,
+                contact_email=self.default_contact_email,
+                code="tepapa",
+                name=SHARED_MUSEUMS["tepapa"].name,
+                api_key=self.tepapa_api_key,
+            ),
         }
 
     # File System Configuration
@@ -350,6 +363,7 @@ class Settings(BaseSettings):
             "wellcome": self.data_dir / "wellcome",
             "loc": self.data_dir / "loc",
             "rijks": self.data_dir / "rijks",
+            "tepapa": self.data_dir / "tepapa",
         }
 
         for museum, base_dir in self.museum_dirs.items():

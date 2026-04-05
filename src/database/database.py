@@ -56,6 +56,7 @@ class Database:
             {"code": "wellcome", "name": "Wellcome Collection"},
             {"code": "loc", "name": "Library of Congress"},
             {"code": "rijks", "name": "Rijksmuseum"},
+            {"code": "tepapa", "name": "Museum of New Zealand Te Papa Tongarewa"},
         ]
 
         for museum_data in museums:
