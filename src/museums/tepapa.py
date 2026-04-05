@@ -161,6 +161,9 @@ class TePapaClient(MuseumAPIClient):
         if api_key:
             self.session.headers.update({"x-api-key": api_key})
 
+    def _get_auth_header(self) -> str:
+        return ""
+
     def get_collection_info(self) -> Dict[str, Any]:
         body = {"query": "", "size": 1, "from": 0}
         resp = self.session.post(TEPAPA_SEARCH_URL, json=body, timeout=30)
