@@ -79,7 +79,20 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
     meta = record_el.find("oai:metadata", NS)
     rdf = meta.find("rdf:RDF", NS) if meta is not None else None
     if rdf is None:
-        return {"oai_identifier": oai_id}
+        return {
+            "oai_identifier":   oai_id,
+            "accession_number": "",
+            "title":            "",
+            "artist":           "",
+            "date_display":     None,
+            "description":      None,
+            "artwork_type":     None,
+            "image_url":        None,
+            "rights_uri":       "",
+            "is_public_domain": False,
+            "height_cm":        None,
+            "width_cm":         None,
+        }
 
     # ── ore:Aggregation ───────────────────────────────────────────────────────
     agg = rdf.find("ore:Aggregation", NS)
@@ -96,6 +109,7 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
     # ── edm:ProvidedCHO ───────────────────────────────────────────────────────
     cho = rdf.find("edm:ProvidedCHO", NS)
     accession_number = title = date_display = description = artwork_type = ""
+    artist = ""
     creator_uri = None
     extent_text = None
     if cho is not None:
@@ -110,12 +124,14 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
         creator_el = cho.find("dc:creator", NS)
         if creator_el is not None:
             creator_uri = creator_el.get(f"{{{NS['rdf']}}}resource")
+            if creator_uri is None:
+                # literal text creator (no agent URI)
+                artist = (creator_el.text or "").strip()
         extent_el = cho.find("dcterms:extent", NS)
         if extent_el is not None:
             extent_text = (extent_el.text or "").strip()
 
     # ── Resolve artist from edm:Agent ─────────────────────────────────────────
-    artist = ""
     if creator_uri:
         for agent in rdf.findall("edm:Agent", NS):
             if agent.get(f"{{{NS['rdf']}}}about") == creator_uri:
