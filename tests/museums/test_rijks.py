@@ -181,3 +181,69 @@ def test_xml_record_to_dict_restricted():
     root = ET.fromstring(SAMPLE_RECORD_RESTRICTED_XML)
     d = _xml_record_to_dict(root)
     assert d["is_public_domain"] is False
+
+
+# ── Task 5: RijksArtworkFactory ───────────────────────────────────────────────
+
+from src.museums.rijks import RijksArtworkFactory
+
+SAMPLE_DICT = {
+    "oai_identifier":   "https://id.rijksmuseum.nl/200064126",
+    "accession_number": "SK-A-3262",
+    "title":            "Night Watch",
+    "artist":           "Rembrandt van Rijn",
+    "date_display":     "1642",
+    "description":      "Famous Dutch painting.",
+    "artwork_type":     "painting",
+    "image_url":        "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg",
+    "rights_uri":       "https://creativecommons.org/publicdomain/zero/1.0/",
+    "is_public_domain": True,
+    "height_cm":        363.0,
+    "width_cm":         437.0,
+}
+
+
+def test_factory_creates_metadata():
+    factory = RijksArtworkFactory()
+    m = factory.create_metadata(SAMPLE_DICT)
+
+    assert m is not None
+    assert m.id == "SK-A-3262"
+    assert m.accession_number == "SK-A-3262"
+    assert m.title == "Night Watch"
+    assert m.artist == "Rembrandt van Rijn"
+    assert m.date_display == "1642"
+    assert m.is_public_domain is True
+    assert m.primary_image_url == "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg"
+    assert m.image_urls == {"full": "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg"}
+    assert m.height_cm == 363.0
+    assert m.width_cm == 437.0
+    assert m.description == "Famous Dutch painting."
+    assert m.artwork_type == "painting"
+
+
+def test_factory_returns_none_without_accession():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "accession_number": ""}) is None
+
+
+def test_factory_returns_none_without_image():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "image_url": None}) is None
+
+
+def test_factory_not_public_domain_returns_none():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "is_public_domain": False}) is None
+
+
+def test_factory_fallback_artist():
+    factory = RijksArtworkFactory()
+    m = factory.create_metadata({**SAMPLE_DICT, "artist": ""})
+    assert m.artist == "Unknown Artist"
+
+
+def test_factory_fallback_title():
+    factory = RijksArtworkFactory()
+    m = factory.create_metadata({**SAMPLE_DICT, "title": ""})
+    assert m.title == "Untitled"

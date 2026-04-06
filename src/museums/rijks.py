@@ -159,50 +159,42 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
 
 
 class RijksArtworkFactory(ArtworkMetadataFactory):
+    """Factory for Rijksmuseum OAI-PMH EDM records.
+
+    Expects a dict produced by ``_xml_record_to_dict``.
+    Silently returns None for non-public-domain or image-less records.
+    """
+
     def __init__(self):
         super().__init__("rijks")
 
     def create_metadata(self, data: Dict[str, Any]) -> Optional[ArtworkMetadata]:
-        obj_num = data.get("objectNumber", "").strip()
-        if not obj_num:
+        acc = (data.get("accession_number") or "").strip()
+        if not acc:
             return None
-
-        web_image = data.get("webImage") or {}
-        img_url = web_image.get("url", "").strip()
-        if not img_url:
+        if not data.get("image_url"):
             return None
-        full_url = img_url + "=s0"
+        if not data.get("is_public_domain", False):
+            return None
 
         try:
-            dating = data.get("dating") or {}
-            year_early = dating.get("yearEarly")
-            year_late = dating.get("yearLate")
-
-            dims = data.get("dimensions") or []
-            height_cm, width_cm, depth_cm = None, None, None
-
             return ArtworkMetadata(
-                id=obj_num,
-                accession_number=obj_num,
-                title=data.get("title", "Untitled") or "Untitled",
-                artist=data.get("principalOrFirstMaker", "Unknown Artist") or "Unknown Artist",
-                date_display=dating.get("presentingDate"),
-                date_start=str(year_early) if year_early else None,
-                date_end=str(year_late) if year_late else None,
-                medium=data.get("physicalMedium"),
-                height_cm=height_cm,
-                width_cm=width_cm,
-                depth_cm=depth_cm,
+                id=acc,
+                accession_number=acc,
+                title=data.get("title") or "Untitled",
+                artist=data.get("artist") or "Unknown Artist",
+                date_display=data.get("date_display") or None,
+                medium=data.get("medium") or None,
+                height_cm=data.get("height_cm"),
+                width_cm=data.get("width_cm"),
+                artwork_type=data.get("artwork_type") or None,
+                description=data.get("description") or None,
                 is_public_domain=True,
-                credit_line=(data.get("acquisition") or {}).get("creditLine"),
-                description=data.get("plaqueDescriptionEnglish") or data.get("description"),
-                primary_image_url=full_url,
-                image_urls={"full": full_url},
-                image_pixel_width=web_image.get("width"),
-                image_pixel_height=web_image.get("height"),
+                primary_image_url=data["image_url"],
+                image_urls={"full": data["image_url"]},
             )
         except Exception as e:
-            self.logger.error(f"Error creating Rijksmuseum metadata for {obj_num}: {e}")
+            self.logger.error(f"Error creating Rijksmuseum metadata for {acc}: {e}")
             return None
 
 
