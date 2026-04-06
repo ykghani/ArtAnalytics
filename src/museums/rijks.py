@@ -238,21 +238,15 @@ class RijksProgressTracker(BaseProgressTracker):
 
 
 class RijksClient(MuseumAPIClient):
-    """Rijksmuseum API client — paginated collection endpoint."""
+    """Rijksmuseum OAI-PMH client — EDM/RDF-XML, no API key required."""
 
     def __init__(
         self,
         museum_info: MuseumInfo,
-        api_key: Optional[str] = None,
+        api_key: Optional[str] = None,   # accepted but ignored
         cache_file: Optional[Path] = None,
         progress_tracker: Optional[BaseProgressTracker] = None,
     ):
-        self._rijks_api_key = api_key
-        if not self._rijks_api_key:
-            raise ValueError(
-                "Rijksmuseum API key is required. Set RIJKS_API_KEY in your .env file. "
-                "Get a free key at https://www.rijksmuseum.nl/en/rijksstudio/"
-            )
         super().__init__(museum_info=museum_info, api_key=None, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = RijksArtworkFactory()
@@ -261,74 +255,90 @@ class RijksClient(MuseumAPIClient):
     def _get_auth_header(self) -> str:
         return ""
 
-    def _api_params(self, extra: Dict = None) -> Dict:
-        p = {"apikey": self._rijks_api_key, "format": "json"}
-        if extra:
-            p.update(extra)
-        return p
-
     def get_collection_info(self) -> Dict[str, Any]:
-        resp = self.session.get(RIJKS_OAI_URL, params=self._api_params({"ps": 1, "p": 1, "imgonly": "true"}))
-        resp.raise_for_status()
-        return {"total_objects": resp.json().get("count", 0)}
-
-    def _fetch_detail(self, object_number: str) -> Dict[str, Any]:
-        url = f"{RIJKS_OAI_URL}/{object_number}"
-        resp = self.session.get(url, params=self._api_params())
-        resp.raise_for_status()
-        return resp.json().get("artObject") or {}
-
-    def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        page_size = 100
-        start_page = 1
-        if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
-            start_page = self.progress_tracker.state.last_page
-
-        page = start_page
-        self.logger.info(f"Rijksmuseum: starting at page {page}")
-
-        while True:
-            resp = self.session.get(
-                RIJKS_OAI_URL,
-                params=self._api_params({"ps": page_size, "p": page, "imgonly": "true", "s": "relevance"}),
-            )
-            resp.raise_for_status()
-            body = resp.json()
-
-            if page == start_page:
-                total = body.get("count", 0)
-                self.logger.info(f"Rijksmuseum: total={total}")
-                if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
-                    self.progress_tracker.state.total_objects = total
-
-            art_objects = body.get("artObjects") or []
-            if not art_objects:
-                break
-
-            for obj in art_objects:
-                obj_num = obj.get("objectNumber", "")
-                if self.progress_tracker and self.progress_tracker.is_processed(obj_num):
-                    continue
-
-                detail = self._fetch_detail(obj_num)
-                merged = {**obj, **detail}
-                metadata = self.artwork_factory.create_metadata(merged)
-                if metadata:
-                    yield metadata
-
-                time.sleep(self.museum_info.rate_limit)
-
-            page += 1
-            if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
-                self.progress_tracker.state.last_page = page
-                self.progress_tracker._save_progress()
-
-            self.logger.progress(f"Rijksmuseum: page {page}")
-            time.sleep(self.museum_info.rate_limit)
+        """Fetch the first OAI page to discover completeListSize."""
+        root = self._fetch_page(resumption_token=None)
+        token_el = root.find(".//oai:resumptionToken", NS)
+        total = 0
+        if token_el is not None:
+            try:
+                total = int(token_el.get("completeListSize", 0))
+            except (TypeError, ValueError):
+                pass
+        return {"total_objects": total}
 
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
-        detail = self._fetch_detail(artwork_id)
-        return self.artwork_factory.create_metadata(detail) if detail else None
+        """Not supported: OAI-PMH requires the URI identifier, not accession number."""
+        self.logger.warning(
+            f"get_artwork_details not supported for Rijksmuseum OAI-PMH "
+            f"(accession '{artwork_id}' cannot be reverse-mapped to OAI URI). "
+            f"Use iter_collection for bulk retrieval."
+        )
+        return None
+
+    def _fetch_page(self, resumption_token: Optional[str]) -> ET.Element:
+        """Fetch one OAI-PMH page and return the parsed root element."""
+        if resumption_token:
+            params = {"verb": "ListRecords", "resumptionToken": resumption_token}
+        else:
+            params = {"verb": "ListRecords", "metadataPrefix": "edm"}
+        resp = self.session.get(RIJKS_OAI_URL, params=params, timeout=60)
+        resp.raise_for_status()
+        return ET.fromstring(resp.content)
+
+    def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
+        token: Optional[str] = None
+        if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
+            token = self.progress_tracker.state.resumption_token
+
+        self.logger.info(
+            f"Rijksmuseum OAI-PMH: "
+            f"{'resuming from token ' + token if token else 'starting from beginning'}"
+        )
+
+        first_page = True
+
+        while True:
+            root = self._fetch_page(token)
+            list_records = root.find("oai:ListRecords", NS)
+            if list_records is None:
+                self.logger.warning("Rijksmuseum: no ListRecords element; stopping.")
+                break
+
+            token_el = list_records.find("oai:resumptionToken", NS)
+            if first_page and token_el is not None:
+                try:
+                    total = int(token_el.get("completeListSize", 0))
+                    if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
+                        self.progress_tracker.state.total_objects = total
+                    self.logger.info(f"Rijksmuseum: total={total}")
+                except (TypeError, ValueError):
+                    pass
+            first_page = False
+
+            for record_el in list_records.findall("oai:record", NS):
+                data = _xml_record_to_dict(record_el)
+                acc = data.get("accession_number", "")
+                if self.progress_tracker and self.progress_tracker.is_processed(acc):
+                    continue
+                metadata = self.artwork_factory.create_metadata(data)
+                if metadata:
+                    yield metadata
+                time.sleep(self.museum_info.rate_limit)
+
+            if token_el is None:
+                break
+            next_token = (token_el.text or "").strip()
+            if not next_token:
+                break
+
+            token = next_token
+            if self.progress_tracker and isinstance(self.progress_tracker, RijksProgressTracker):
+                self.progress_tracker.state.resumption_token = token
+                self.progress_tracker._save_progress()
+
+            self.logger.progress(f"Rijksmuseum: resumption_token={token}")
+            time.sleep(self.museum_info.rate_limit)
 
 
 class RijksImageProcessor(MuseumImageProcessor):

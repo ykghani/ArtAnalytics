@@ -308,3 +308,129 @@ def test_tracker_does_not_persist_last_page(tmp_path):
     t.force_save()
     data = json.loads((tmp_path / "progress.json").read_text())
     assert "last_page" not in data
+
+
+# ── Task 9: RijksClient ───────────────────────────────────────────────────────
+
+from src.museums.rijks import RijksClient, RIJKS_OAI_URL
+from src.museums.museum_info import MuseumInfo
+
+
+def _make_client(tmp_path, tracker=None):
+    info = MuseumInfo(
+        name="Rijksmuseum",
+        base_url=RIJKS_OAI_URL,
+        code="rijks",
+        user_agent="test/1.0",
+        rate_limit=0.0,
+    )
+    return RijksClient(museum_info=info, cache_file=None, progress_tracker=tracker)
+
+
+def _mock_response(xml_text: str):
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.content = xml_text.encode("utf-8")
+    return resp
+
+
+def test_client_init_no_api_key(tmp_path):
+    client = _make_client(tmp_path)
+    assert client is not None
+
+
+def test_client_api_key_none_ignored(tmp_path):
+    info = MuseumInfo(
+        name="Rijksmuseum", base_url=RIJKS_OAI_URL,
+        code="rijks", user_agent="test/1.0", rate_limit=0.0,
+    )
+    client = RijksClient(museum_info=info, api_key=None, cache_file=None)
+    assert client is not None
+
+
+def test_iter_collection_single_page(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="", complete_size=1)
+
+    with patch.object(RijksClient, "_fetch_page", return_value=ET.fromstring(page1)):
+        client = _make_client(tmp_path)
+        results = list(client.iter_collection())
+
+    assert len(results) == 1
+    assert results[0].accession_number == "SK-A-3262"
+
+
+def test_iter_collection_skips_non_public_domain(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_RESTRICTED_XML, token="", complete_size=1)
+
+    with patch.object(RijksClient, "_fetch_page", return_value=ET.fromstring(page1)):
+        client = _make_client(tmp_path)
+        results = list(client.iter_collection())
+
+    assert results == []
+
+
+def test_iter_collection_two_pages(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="tok_p2", complete_size=2)
+    record2 = SAMPLE_RECORD_XML.replace("SK-A-3262", "SK-A-9999").replace(
+        "https://id.rijksmuseum.nl/200064126", "https://id.rijksmuseum.nl/200064127"
+    )
+    page2 = _wrap_list_records(record2, token="", complete_size=2)
+
+    with patch.object(RijksClient, "_fetch_page", side_effect=[ET.fromstring(page1), ET.fromstring(page2)]):
+        client = _make_client(tmp_path)
+        results = list(client.iter_collection())
+
+    assert {r.accession_number for r in results} == {"SK-A-3262", "SK-A-9999"}
+
+
+def test_iter_collection_resumes_from_token(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="", complete_size=1)
+
+    with patch.object(RijksClient, "_fetch_page", return_value=ET.fromstring(page1)) as mock_fp:
+        tracker = RijksProgressTracker(progress_file=tmp_path / "p.json")
+        tracker.state.resumption_token = "saved_token"
+        client = _make_client(tmp_path, tracker=tracker)
+        list(client.iter_collection())
+
+    first_call_token = mock_fp.call_args_list[0][0][0]
+    assert first_call_token == "saved_token"
+
+
+def test_iter_collection_captures_total(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="", complete_size=99999)
+
+    with patch.object(RijksClient, "_fetch_page", return_value=ET.fromstring(page1)):
+        tracker = RijksProgressTracker(progress_file=tmp_path / "p.json")
+        client = _make_client(tmp_path, tracker=tracker)
+        list(client.iter_collection())
+
+    assert tracker.state.total_objects == 99999
+
+
+def test_iter_collection_skips_processed(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="", complete_size=1)
+
+    with patch.object(RijksClient, "_fetch_page", return_value=ET.fromstring(page1)):
+        tracker = RijksProgressTracker(progress_file=tmp_path / "p.json")
+        tracker.log_status("SK-A-3262", "success")
+        client = _make_client(tmp_path, tracker=tracker)
+        results = list(client.iter_collection())
+
+    assert results == []
+
+
+def test_get_collection_info(tmp_path):
+    page1 = _wrap_list_records(SAMPLE_RECORD_XML, token="", complete_size=12345)
+    resp = _mock_response(page1)
+
+    with patch("requests.Session.get", return_value=resp):
+        client = _make_client(tmp_path)
+        info = client.get_collection_info()
+
+    assert info["total_objects"] == 12345
+
+
+def test_get_artwork_details_returns_none(tmp_path):
+    client = _make_client(tmp_path)
+    result = client.get_artwork_details("SK-A-3262")
+    assert result is None
