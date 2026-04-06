@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     )
 
     # Common Settings
-    default_contact_email: EmailStr = Field(..., env="DEFAULT_CONTACT_EMAIL")
+    default_contact_email: Optional[EmailStr] = Field(default=None, env="DEFAULT_CONTACT_EMAIL")
 
     # Museum-specific Settings
     aic_api_base_url: str = Field(
@@ -296,13 +296,13 @@ class Settings(BaseSettings):
                 name=SHARED_MUSEUMS["loc"].name,
             ),
             "rijks": MuseumConfig(
-                api_base_url="https://www.rijksmuseum.nl/api/nl/collection",
+                api_base_url="https://data.rijksmuseum.nl/oai",
                 user_agent=self.rijks_user_agent,
                 rate_limit=self.rijks_rate_limit,
                 contact_email=self.default_contact_email,
                 code="rijks",
                 name=SHARED_MUSEUMS["rijks"].name,
-                api_key=self.rijks_api_key,
+                # api_key intentionally omitted — OAI-PMH requires no authentication
             ),
             "tepapa": MuseumConfig(
                 api_base_url="https://data.tepapa.govt.nz/collection",
