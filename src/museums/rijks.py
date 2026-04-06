@@ -199,37 +199,42 @@ class RijksArtworkFactory(ArtworkMetadataFactory):
 
 @dataclass
 class RijksProgressState:
-    processed_ids: Set[str] = field(default_factory=set)
-    success_ids: Set[str] = field(default_factory=set)
-    failed_ids: Set[str] = field(default_factory=set)
-    error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    last_page: int = 1
-    total_objects: int = 0
+    processed_ids:    Set[str]                  = field(default_factory=set)
+    success_ids:      Set[str]                  = field(default_factory=set)
+    failed_ids:       Set[str]                  = field(default_factory=set)
+    error_log:        Dict[str, Dict[str, str]] = field(default_factory=dict)
+    resumption_token: Optional[str]             = None
+    total_objects:    int                       = 0
 
 
 class RijksProgressTracker(BaseProgressTracker):
-    def __init__(self, progress_file: Path, max_cache_size: int = 10000, save_batch_size: int = 100):
+    def __init__(
+        self,
+        progress_file: Path,
+        max_cache_size: int = 10000,
+        save_batch_size: int = 100,
+    ):
         self.state = RijksProgressState()
         super().__init__(progress_file, max_cache_size, save_batch_size)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "rijks")
 
     def get_state_dict(self) -> Dict[str, Any]:
         return {
-            "processed_ids": list(self.state.processed_ids),
-            "success_ids": list(self.state.success_ids),
-            "failed_ids": list(self.state.failed_ids),
-            "error_log": self.state.error_log,
-            "last_page": self.state.last_page,
-            "total_objects": self.state.total_objects,
+            "processed_ids":    list(self.state.processed_ids),
+            "success_ids":      list(self.state.success_ids),
+            "failed_ids":       list(self.state.failed_ids),
+            "error_log":        self.state.error_log,
+            "resumption_token": self.state.resumption_token,
+            "total_objects":    self.state.total_objects,
         }
 
     def restore_state(self, data: Dict[str, Any]) -> None:
-        self.state.processed_ids = set(data.get("processed_ids", []))
-        self.state.success_ids = set(data.get("success_ids", []))
-        self.state.failed_ids = set(data.get("failed_ids", []))
-        self.state.error_log = data.get("error_log", {})
-        self.state.last_page = data.get("last_page", 1)
-        self.state.total_objects = data.get("total_objects", 0)
+        self.state.processed_ids    = set(data.get("processed_ids", []))
+        self.state.success_ids      = set(data.get("success_ids", []))
+        self.state.failed_ids       = set(data.get("failed_ids", []))
+        self.state.error_log        = data.get("error_log", {})
+        self.state.resumption_token = data.get("resumption_token")
+        self.state.total_objects    = data.get("total_objects", 0)
 
 
 class RijksClient(MuseumAPIClient):

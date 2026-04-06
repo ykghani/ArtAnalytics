@@ -247,3 +247,64 @@ def test_factory_fallback_title():
     factory = RijksArtworkFactory()
     m = factory.create_metadata({**SAMPLE_DICT, "title": ""})
     assert m.title == "Untitled"
+
+
+# ── Task 7: RijksProgressTracker ─────────────────────────────────────────────
+
+from src.museums.rijks import RijksProgressTracker
+
+
+def _make_tracker(tmp_path):
+    return RijksProgressTracker(progress_file=tmp_path / "progress.json")
+
+
+def test_tracker_initial_state(tmp_path):
+    t = _make_tracker(tmp_path)
+    assert t.state.resumption_token is None
+    assert t.state.total_objects == 0
+    assert not t.state.processed_ids
+
+
+def test_tracker_get_state_dict(tmp_path):
+    t = _make_tracker(tmp_path)
+    t.state.resumption_token = "abc123"
+    t.state.total_objects = 500
+    d = t.get_state_dict()
+    assert d["resumption_token"] == "abc123"
+    assert d["total_objects"] == 500
+    assert "last_page" not in d
+
+
+def test_tracker_restore_state(tmp_path):
+    t = _make_tracker(tmp_path)
+    t.restore_state({
+        "processed_ids":    ["SK-A-1", "SK-A-2"],
+        "success_ids":      ["SK-A-1"],
+        "failed_ids":       ["SK-A-2"],
+        "error_log":        {},
+        "resumption_token": "tok999",
+        "total_objects":    1000,
+    })
+    assert "SK-A-1" in t.state.processed_ids
+    assert t.state.resumption_token == "tok999"
+    assert t.state.total_objects == 1000
+
+
+def test_tracker_roundtrip(tmp_path):
+    t = _make_tracker(tmp_path)
+    t.state.resumption_token = "page2token"
+    t.state.total_objects = 42
+    t.log_status("SK-A-99", "success")
+    t.force_save()
+
+    t2 = _make_tracker(tmp_path)
+    assert t2.state.resumption_token == "page2token"
+    assert t2.state.total_objects == 42
+    assert "SK-A-99" in t2.state.success_ids
+
+
+def test_tracker_does_not_persist_last_page(tmp_path):
+    t = _make_tracker(tmp_path)
+    t.force_save()
+    data = json.loads((tmp_path / "progress.json").read_text())
+    assert "last_page" not in data
