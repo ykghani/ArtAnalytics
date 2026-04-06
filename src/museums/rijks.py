@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterator, Optional, Set, Tuple
 
 from PIL import Image
 
@@ -324,7 +324,6 @@ class RijksClient(MuseumAPIClient):
                 metadata = self.artwork_factory.create_metadata(data)
                 if metadata:
                     yield metadata
-                time.sleep(self.museum_info.rate_limit)
 
             if token_el is None:
                 break
