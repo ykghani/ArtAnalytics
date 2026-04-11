@@ -27,6 +27,7 @@ ALL_MUSEUMS = [
     {"code": "mia", "name": "Minneapolis Institute of Art"},
     {"code": "smk", "name": "Statens Museum for Kunst"},
     {"code": "rijks", "name": "Rijksmuseum"},
+    {"code": "nga", "name": "National Gallery of Art"},
 ]
 
 
