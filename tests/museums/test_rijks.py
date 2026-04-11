@@ -54,6 +54,45 @@ SAMPLE_RECORD_XML = textwrap.dedent("""\
     </record>
 """)
 
+# Real API format: ProvidedCHO nested inside aggregatedCHO, artist in rdf:Description
+SAMPLE_RECORD_NESTED_XML = textwrap.dedent("""\
+    <record xmlns="http://www.openarchives.org/OAI/2.0/">
+      <header>
+        <identifier>https://id.rijksmuseum.nl/200064126</identifier>
+        <datestamp>2026-04-05T18:52:36Z</datestamp>
+      </header>
+      <metadata>
+        <rdf:RDF
+          xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+          xmlns:ore="http://www.openarchives.org/ore/terms/"
+          xmlns:edm="http://www.europeana.eu/schemas/edm/"
+          xmlns:dc="http://purl.org/dc/elements/1.1/"
+          xmlns:dcterms="http://purl.org/dc/terms/"
+          xmlns:skos="http://www.w3.org/2004/02/skos/core#">
+          <ore:Aggregation rdf:about="https://id.rijksmuseum.nl/200064126#aggregation">
+            <edm:aggregatedCHO>
+              <edm:ProvidedCHO rdf:about="https://id.rijksmuseum.nl/200064126">
+                <dc:identifier>SK-A-3262</dc:identifier>
+                <dc:title xml:lang="en">Night Watch</dc:title>
+                <dc:creator rdf:resource="https://id.rijksmuseum.nl/21029638"/>
+                <dcterms:created xml:lang="en">1642</dcterms:created>
+                <dcterms:extent xml:lang="en">height 363 cm \u00d7 width 437 cm</dcterms:extent>
+                <dc:description xml:lang="en">Famous Dutch painting.</dc:description>
+                <dc:type rdf:resource="https://id.rijksmuseum.nl/2208"/>
+              </edm:ProvidedCHO>
+            </edm:aggregatedCHO>
+            <edm:isShownBy rdf:resource="https://iiif.micr.io/ABCDEF/full/max/0/default.jpg"/>
+            <edm:rights rdf:resource="https://creativecommons.org/publicdomain/zero/1.0/"/>
+          </ore:Aggregation>
+          <rdf:Description rdf:about="https://id.rijksmuseum.nl/21029638">
+            <skos:prefLabel xml:lang="en">Rembrandt van Rijn</skos:prefLabel>
+            <skos:prefLabel xml:lang="nl">Rembrandt van Rijn</skos:prefLabel>
+          </rdf:Description>
+        </rdf:RDF>
+      </metadata>
+    </record>
+""")
+
 SAMPLE_RECORD_RESTRICTED_XML = SAMPLE_RECORD_XML.replace(
     "https://creativecommons.org/publicdomain/zero/1.0/",
     "https://creativecommons.org/licenses/by/4.0/",
@@ -116,6 +155,51 @@ def test_parse_dimensions_mm_units():
     assert w is None
 
 
+# ── _resolve_artwork_type ─────────────────────────────────────────────────────
+
+from src.museums.rijks import _resolve_artwork_type, ALLOWED_ARTWORK_TYPES
+
+
+def test_resolve_artwork_type_known_uri():
+    # Painting URI → "painting"
+    assert _resolve_artwork_type("https://id.rijksmuseum.nl/2208") == "painting"
+
+
+def test_resolve_artwork_type_known_uri_print():
+    assert _resolve_artwork_type("https://id.rijksmuseum.nl/22040") == "print"
+
+
+def test_resolve_artwork_type_literal_text():
+    assert _resolve_artwork_type("painting") == "painting"
+
+
+def test_resolve_artwork_type_literal_case_insensitive():
+    assert _resolve_artwork_type("Painting") == "painting"
+
+
+def test_resolve_artwork_type_unknown_uri_returns_empty():
+    assert _resolve_artwork_type("https://id.rijksmuseum.nl/99999999") == ""
+
+
+def test_resolve_artwork_type_coin_uri_not_in_allowlist():
+    label = _resolve_artwork_type("https://id.rijksmuseum.nl/2201030")
+    assert label == "coin"
+    assert label not in ALLOWED_ARTWORK_TYPES
+
+
+def test_resolve_artwork_type_none():
+    assert _resolve_artwork_type(None) == ""
+
+
+def test_resolve_artwork_type_empty():
+    assert _resolve_artwork_type("") == ""
+
+
+def test_allowed_artwork_types_contains_expected():
+    for t in ("painting", "drawing", "print", "photograph", "poster"):
+        assert t in ALLOWED_ARTWORK_TYPES
+
+
 # ── Task 3: _is_public_domain_rights  and  _xml_record_to_dict ───────────────
 
 from src.museums.rijks import _is_public_domain_rights, _xml_record_to_dict
@@ -142,6 +226,7 @@ def test_is_public_domain_none():
 
 
 def test_xml_record_to_dict_full():
+    # SAMPLE_RECORD_XML uses a literal <dc:type>painting</dc:type>
     root = ET.fromstring(SAMPLE_RECORD_XML)
     d = _xml_record_to_dict(root)
 
@@ -157,6 +242,47 @@ def test_xml_record_to_dict_full():
     assert d["width_cm"] == 437.0
     assert d["description"] == "Famous Dutch painting."
     assert d["artwork_type"] == "painting"
+
+
+def test_xml_record_to_dict_uri_type():
+    # Real API uses rdf:resource URI for dc:type, not literal text
+    xml_uri_type = SAMPLE_RECORD_XML.replace(
+        "<dc:type>painting</dc:type>",
+        '<dc:type rdf:resource="https://id.rijksmuseum.nl/2208"/>',
+    )
+    root = ET.fromstring(xml_uri_type)
+    d = _xml_record_to_dict(root)
+    assert d["artwork_type"] == "https://id.rijksmuseum.nl/2208"
+
+
+def test_xml_record_to_dict_nested_format():
+    """Real API: ProvidedCHO inside aggregatedCHO, artist in rdf:Description."""
+    root = ET.fromstring(SAMPLE_RECORD_NESTED_XML)
+    d = _xml_record_to_dict(root)
+
+    assert d["accession_number"] == "SK-A-3262"
+    assert d["title"] == "Night Watch"
+    assert d["artist"] == "Rembrandt van Rijn"
+    assert d["date_display"] == "1642"
+    assert d["image_url"] == "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg"
+    assert d["rights_uri"] == "https://creativecommons.org/publicdomain/zero/1.0/"
+    assert d["is_public_domain"] is True
+    assert d["artwork_type"] == "https://id.rijksmuseum.nl/2208"
+    assert d["height_cm"] == 363.0
+    assert d["width_cm"] == 437.0
+
+
+def test_xml_record_to_dict_nested_format_factory_roundtrip():
+    """Nested XML → dict → factory should produce valid metadata."""
+    from src.museums.rijks import RijksArtworkFactory
+    root = ET.fromstring(SAMPLE_RECORD_NESTED_XML)
+    d = _xml_record_to_dict(root)
+    factory = RijksArtworkFactory()
+    m = factory.create_metadata(d)
+    assert m is not None
+    assert m.accession_number == "SK-A-3262"
+    assert m.artist == "Rembrandt van Rijn"
+    assert m.artwork_type == "painting"
 
 
 def test_xml_record_to_dict_no_artist_agent():
@@ -194,7 +320,7 @@ SAMPLE_DICT = {
     "artist":           "Rembrandt van Rijn",
     "date_display":     "1642",
     "description":      "Famous Dutch painting.",
-    "artwork_type":     "painting",
+    "artwork_type":     "painting",   # literal-text form used in tests
     "image_url":        "https://iiif.micr.io/ABCDEF/full/max/0/default.jpg",
     "rights_uri":       "https://creativecommons.org/publicdomain/zero/1.0/",
     "is_public_domain": True,
@@ -247,6 +373,39 @@ def test_factory_fallback_title():
     factory = RijksArtworkFactory()
     m = factory.create_metadata({**SAMPLE_DICT, "title": ""})
     assert m.title == "Untitled"
+
+
+def test_factory_rejects_disallowed_type_literal():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "artwork_type": "coin"}) is None
+
+
+def test_factory_rejects_disallowed_type_uri():
+    factory = RijksArtworkFactory()
+    coin_uri = "https://id.rijksmuseum.nl/2201030"
+    assert factory.create_metadata({**SAMPLE_DICT, "artwork_type": coin_uri}) is None
+
+
+def test_factory_accepts_allowed_type_uri():
+    factory = RijksArtworkFactory()
+    painting_uri = "https://id.rijksmuseum.nl/2208"
+    m = factory.create_metadata({**SAMPLE_DICT, "artwork_type": painting_uri})
+    assert m is not None
+
+
+def test_factory_rejects_unknown_type_uri():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "artwork_type": "https://id.rijksmuseum.nl/99999999"}) is None
+
+
+def test_factory_rejects_missing_type():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "artwork_type": None}) is None
+
+
+def test_factory_rejects_empty_type():
+    factory = RijksArtworkFactory()
+    assert factory.create_metadata({**SAMPLE_DICT, "artwork_type": ""}) is None
 
 
 # ── Task 7: RijksProgressTracker ─────────────────────────────────────────────

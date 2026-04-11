@@ -41,6 +41,85 @@ _DIM_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Static map of Rijksmuseum type URIs → lowercase English labels.
+# Built from a 40-page OAI-PMH sample (~8 000 records) against the
+# Linked Art JSON endpoint at https://data.rijksmuseum.nl/<id>.
+_TYPE_URI_LABELS: Dict[str, str] = {
+    # ── 2-D display types (allowed) ──────────────────────────────────────────
+    "https://id.rijksmuseum.nl/2208":       "painting",
+    "https://id.rijksmuseum.nl/220363":     "drawing",
+    "https://id.rijksmuseum.nl/22040":      "print",
+    "https://id.rijksmuseum.nl/220951":     "photograph",
+    "https://id.rijksmuseum.nl/22010762":   "photomechanical print",
+    "https://id.rijksmuseum.nl/2203113":    "poster",
+    "https://id.rijksmuseum.nl/2202242":    "cartoon",
+    "https://id.rijksmuseum.nl/2202656":    "design",
+    "https://id.rijksmuseum.nl/220613":     "surimono",
+    "https://id.rijksmuseum.nl/22011650":   "digital print",
+    "https://id.rijksmuseum.nl/2202852":    "hanging scroll",
+    "https://id.rijksmuseum.nl/2202326":    "schetsboekblad",
+    "https://id.rijksmuseum.nl/22011546":   "instant photograph",
+    # ── Numismatic / 3-D objects (not allowed, mapped for logging) ────────────
+    "https://id.rijksmuseum.nl/2201030":    "coin",
+    "https://id.rijksmuseum.nl/2201653":    "history medal",
+    "https://id.rijksmuseum.nl/220105":     "medal",
+    "https://id.rijksmuseum.nl/2202764":    "schutterspenning",
+    "https://id.rijksmuseum.nl/2202754":    "erepenning",
+    "https://id.rijksmuseum.nl/2202521":    "draagpenning",
+    "https://id.rijksmuseum.nl/2202749":    "jeton",
+    "https://id.rijksmuseum.nl/22032":      "draagteken",
+    "https://id.rijksmuseum.nl/22011935":   "loden penning",
+    "https://id.rijksmuseum.nl/220120":     "case furniture",
+    "https://id.rijksmuseum.nl/22011654":   "alms token",
+    "https://id.rijksmuseum.nl/220143":     "box",
+    "https://id.rijksmuseum.nl/2202773":    "award medal",
+    "https://id.rijksmuseum.nl/2201563":    "gameboard",
+    "https://id.rijksmuseum.nl/2202091":    "pedestal",
+    "https://id.rijksmuseum.nl/220297":     "figure",
+    "https://id.rijksmuseum.nl/2202747":    "medal box",
+    "https://id.rijksmuseum.nl/2202525":    "wrapper",
+    "https://id.rijksmuseum.nl/2201450":    "domino",
+    "https://id.rijksmuseum.nl/2201009":    "reproductie",
+    "https://id.rijksmuseum.nl/2202841":    "glasnegatief",
+    "https://id.rijksmuseum.nl/2201741":    "card game",
+    "https://id.rijksmuseum.nl/2203020":    "ansichtkaart",
+    "https://id.rijksmuseum.nl/22011996":   "centime",
+    "https://id.rijksmuseum.nl/2202849":    "stereograph",
+    "https://id.rijksmuseum.nl/2201486":    "letter",
+    "https://id.rijksmuseum.nl/2202429":    "business card",
+    "https://id.rijksmuseum.nl/2203382":    "sheets (paper artifacts)",
+    "https://id.rijksmuseum.nl/220108":     "cannon",
+    "https://id.rijksmuseum.nl/2201402":    "eating & drinking utensils",
+    "https://id.rijksmuseum.nl/2201479":    "flatware",
+    "https://id.rijksmuseum.nl/220614":     "book",
+    "https://id.rijksmuseum.nl/2203928":    "measuring instrument",
+    "https://id.rijksmuseum.nl/2202240":    "advertising card",
+    "https://id.rijksmuseum.nl/2201233":    "calendar",
+    "https://id.rijksmuseum.nl/2201406":    "portefeuille",
+    "https://id.rijksmuseum.nl/2202872":    "prayer card",
+    "https://id.rijksmuseum.nl/2202661":    "musical instrument",
+    "https://id.rijksmuseum.nl/2201973":    "area plan",
+    "https://id.rijksmuseum.nl/220234":     "nieuwjaarswens",
+    "https://id.rijksmuseum.nl/2201621":    "titelblad",
+}
+
+# Only these type labels are suitable for 2-D display.
+ALLOWED_ARTWORK_TYPES: frozenset = frozenset({
+    "painting",
+    "drawing",
+    "print",
+    "photograph",
+    "photomechanical print",
+    "poster",
+    "cartoon",
+    "design",
+    "surimono",
+    "digital print",
+    "hanging scroll",
+    "schetsboekblad",
+    "instant photograph",
+})
+
 
 def _parse_dimensions_edm(extent: Optional[str]) -> Tuple[Optional[float], Optional[float]]:
     """Parse 'height 363 cm × width 437 cm' → (363.0, 437.0).
@@ -64,6 +143,22 @@ def _is_public_domain_rights(rights_uri: Optional[str]) -> bool:
     if not rights_uri:
         return False
     return "publicdomain" in rights_uri or "/zero/" in rights_uri
+
+
+def _resolve_artwork_type(raw: Optional[str]) -> str:
+    """Return a lowercase English type label from a URI or a literal string.
+
+    For URI values (``rdf:resource`` attributes on ``dc:type``) the label is
+    looked up in the static ``_TYPE_URI_LABELS`` table.  Unknown URIs return
+    ``""`` so they are silently rejected by the allowlist filter.  Literal
+    text values are returned as-is (lowercased).
+    """
+    if not raw:
+        return ""
+    raw = raw.strip()
+    if raw.startswith("http"):
+        return _TYPE_URI_LABELS.get(raw, "")
+    return raw.lower()
 
 
 def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
@@ -101,13 +196,28 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
     if agg is not None:
         shown_by = agg.find("edm:isShownBy", NS)
         if shown_by is not None:
+            # Simple form: <edm:isShownBy rdf:resource="..."/>
             image_url = shown_by.get(f"{{{NS['rdf']}}}resource")
+            if not image_url:
+                # Nested form: <edm:isShownBy><edm:WebResource rdf:about="..."/></edm:isShownBy>
+                wr = shown_by.find("edm:WebResource", NS)
+                if wr is not None:
+                    image_url = wr.get(f"{{{NS['rdf']}}}about")
         rights_el = agg.find("edm:rights", NS)
         if rights_el is not None:
             rights_uri = rights_el.get(f"{{{NS['rdf']}}}resource", "")
 
     # ── edm:ProvidedCHO ───────────────────────────────────────────────────────
-    cho = rdf.find("edm:ProvidedCHO", NS)
+    # Current API: ProvidedCHO is nested inside
+    #   ore:Aggregation / edm:aggregatedCHO / edm:ProvidedCHO
+    # Older/test format: ProvidedCHO is a direct child of rdf:RDF
+    cho = None
+    if agg is not None:
+        agg_cho_el = agg.find("edm:aggregatedCHO", NS)
+        if agg_cho_el is not None:
+            cho = agg_cho_el.find("edm:ProvidedCHO", NS)
+    if cho is None:
+        cho = rdf.find("edm:ProvidedCHO", NS)
     accession_number = title = date_display = description = artwork_type = ""
     artist = ""
     creator_uri = None
@@ -120,7 +230,14 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
         title            = _t("dc:title")
         date_display     = _t("dcterms:created")
         description      = _t("dc:description")
-        artwork_type     = _t("dc:type")
+        # dc:type is almost always a URI reference in the real API
+        # (rdf:resource attribute), but may be literal text in tests/legacy data.
+        type_el = cho.find("dc:type", NS)
+        if type_el is not None:
+            type_uri = type_el.get(f"{{{NS['rdf']}}}resource")
+            artwork_type = type_uri if type_uri else (type_el.text or "").strip()
+        else:
+            artwork_type = ""
         creator_el = cho.find("dc:creator", NS)
         if creator_el is not None:
             creator_uri = creator_el.get(f"{{{NS['rdf']}}}resource")
@@ -131,13 +248,25 @@ def _xml_record_to_dict(record_el: ET.Element) -> Dict[str, Any]:
         if extent_el is not None:
             extent_text = (extent_el.text or "").strip()
 
-    # ── Resolve artist from edm:Agent ─────────────────────────────────────────
+    # ── Resolve artist name ───────────────────────────────────────────────────
+    # Current API: creator described in rdf:Description with skos:prefLabel.
+    # Older/test format: creator described in edm:Agent with skos:prefLabel.
+    # Prefer English-language label; fall back to first available.
+    _XML_LANG = "{http://www.w3.org/XML/1998/namespace}lang"
     if creator_uri:
-        for agent in rdf.findall("edm:Agent", NS):
-            if agent.get(f"{{{NS['rdf']}}}about") == creator_uri:
-                label_el = agent.find("skos:prefLabel", NS)
-                if label_el is not None:
-                    artist = (label_el.text or "").strip()
+        candidates = [
+            *rdf.findall("edm:Agent", NS),
+            *rdf.findall(f"{{{NS['rdf']}}}Description"),
+        ]
+        for node in candidates:
+            if node.get(f"{{{NS['rdf']}}}about") == creator_uri:
+                labels = node.findall("skos:prefLabel", NS)
+                en_label = next(
+                    (lbl for lbl in labels if lbl.get(_XML_LANG) == "en"),
+                    labels[0] if labels else None,
+                )
+                if en_label is not None:
+                    artist = (en_label.text or "").strip()
                 break
 
     height_cm, width_cm = _parse_dimensions_edm(extent_text)
@@ -176,6 +305,9 @@ class RijksArtworkFactory(ArtworkMetadataFactory):
             return None
         if not data.get("is_public_domain", False):
             return None
+        type_label = _resolve_artwork_type(data.get("artwork_type"))
+        if type_label not in ALLOWED_ARTWORK_TYPES:
+            return None
 
         try:
             return ArtworkMetadata(
@@ -186,7 +318,7 @@ class RijksArtworkFactory(ArtworkMetadataFactory):
                 date_display=data.get("date_display") or None,
                 height_cm=data.get("height_cm"),
                 width_cm=data.get("width_cm"),
-                artwork_type=data.get("artwork_type") or None,
+                artwork_type=type_label or None,
                 description=data.get("description") or None,
                 is_public_domain=True,
                 primary_image_url=data["image_url"],

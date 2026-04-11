@@ -25,7 +25,8 @@ ALL_MUSEUMS = [
     {"code": "aic", "name": "Art Institute of Chicago"},
     {"code": "cma", "name": "Cleveland Museum of Art"},
     {"code": "mia", "name": "Minneapolis Institute of Art"},
-    {"code": "smk", "name": "Statens Museum for Kunst"}
+    {"code": "smk", "name": "Statens Museum for Kunst"},
+    {"code": "rijks", "name": "Rijksmuseum"},
 ]
 
 
@@ -54,7 +55,11 @@ def migrate():
 
     # --- engines ---
     src_engine = create_engine(f"sqlite:///{SQLITE_PATH}", echo=False)
-    dst_engine = create_engine(postgres_url, echo=False)
+    dst_engine = create_engine(
+        postgres_url,
+        echo=False,
+        connect_args={"sslmode": "require"},
+    )
 
     SrcSession = sessionmaker(bind=src_engine)
     DstSession = sessionmaker(bind=dst_engine)
