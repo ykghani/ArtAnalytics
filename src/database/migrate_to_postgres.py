@@ -8,6 +8,7 @@ The DATABASE_URL must be the public Railway URL, e.g.:
     postgresql://postgres:<password>@roundhouse.proxy.rlwy.net:<port>/railway
 """
 
+import argparse
 import os
 import sys
 from pathlib import Path
@@ -43,7 +44,7 @@ def get_postgres_url() -> str:
     return url
 
 
-def migrate():
+def migrate(force_update: bool = False):
     if not SQLITE_PATH.exists():
         print(f"ERROR: SQLite database not found at {SQLITE_PATH}")
         sys.exit(1)
@@ -99,11 +100,81 @@ def migrate():
 
         # --- migrate artworks ---
         total = src_session.query(Artwork).count()
-        print(f"\nMigrating {total:,} artworks in batches of {BATCH_SIZE}...")
+        mode = "upsert (force-update)" if force_update else "insert-only (skipping existing)"
+        print(f"\nMigrating {total:,} artworks in batches of {BATCH_SIZE}  [{mode}]...")
+
+        # Build a src museum_id -> dst museum_id map using code as the key
+        src_museums = {m.id: m.code for m in src_session.query(Museum).all()}
+
+        if not force_update:
+            # Pre-load all existing (museum_id, original_id) pairs so we can skip them
+            # without issuing a SELECT per record.
+            print("  Loading existing artwork keys from PostgreSQL...")
+            existing_keys: set[tuple[int, str]] = set(
+                dst_session.query(Artwork.museum_id, Artwork.original_id).all()
+            )
+            print(f"  {len(existing_keys):,} records already in PostgreSQL — will skip these.")
+        else:
+            existing_keys = set()
 
         inserted = 0
+        skipped = 0
         updated = 0
         offset = 0
+
+        def _row_dict(src_artwork: Artwork, dst_museum_id: int) -> dict:
+            return dict(
+                museum_id=dst_museum_id,
+                original_id=src_artwork.original_id,
+                accession_number=src_artwork.accession_number,
+                title=src_artwork.title,
+                artist=src_artwork.artist,
+                artist_display=src_artwork.artist_display,
+                artist_bio=src_artwork.artist_bio,
+                artist_nationality=src_artwork.artist_nationality,
+                artist_birth_year=src_artwork.artist_birth_year,
+                artist_death_year=src_artwork.artist_death_year,
+                date_display=src_artwork.date_display,
+                date_start=src_artwork.date_start,
+                date_end=src_artwork.date_end,
+                medium=src_artwork.medium,
+                dimensions=src_artwork.dimensions,
+                height_cm=src_artwork.height_cm,
+                width_cm=src_artwork.width_cm,
+                depth_cm=src_artwork.depth_cm,
+                diameter_cm=src_artwork.diameter_cm,
+                department=src_artwork.department,
+                artwork_type=src_artwork.artwork_type,
+                culture=src_artwork.culture,
+                style=src_artwork.style,
+                is_public_domain=src_artwork.is_public_domain,
+                credit_line=src_artwork.credit_line,
+                is_on_view=src_artwork.is_on_view,
+                is_highlight=src_artwork.is_highlight,
+                is_boosted=src_artwork.is_boosted,
+                boost_rank=src_artwork.boost_rank,
+                has_not_been_viewed_much=src_artwork.has_not_been_viewed_much,
+                description=src_artwork.description,
+                short_description=src_artwork.short_description,
+                provenance=src_artwork.provenance,
+                inscriptions=src_artwork.inscriptions,
+                fun_fact=src_artwork.fun_fact,
+                style_titles=src_artwork.style_titles,
+                keywords=src_artwork.keywords,
+                primary_image_url=src_artwork.primary_image_url,
+                image_urls=src_artwork.image_urls,
+                image_path=src_artwork.image_path,
+                colorfulness=src_artwork.colorfulness,
+                color_h=src_artwork.color_h,
+                color_s=src_artwork.color_s,
+                color_l=src_artwork.color_l,
+                image_pixel_width=src_artwork.image_pixel_width,
+                image_pixel_height=src_artwork.image_pixel_height,
+                quality_scores=src_artwork.quality_scores,
+                quality_score=src_artwork.quality_score,
+                created_at=src_artwork.created_at,
+                updated_at=src_artwork.updated_at,
+            )
 
         while True:
             batch = (
@@ -116,86 +187,52 @@ def migrate():
             if not batch:
                 break
 
+            to_insert: list[dict] = []
             for src_artwork in batch:
-                # Remap museum_id to the destination DB's museum id
-                src_museum = src_session.query(Museum).get(src_artwork.museum_id)
-                if src_museum is None or src_museum.code not in dst_museums:
+                museum_code = src_museums.get(src_artwork.museum_id)
+                if museum_code is None or museum_code not in dst_museums:
                     print(f"  SKIP artwork {src_artwork.id}: unknown museum id {src_artwork.museum_id}")
                     continue
 
-                dst_museum_id = dst_museums[src_museum.code]
+                dst_museum_id = dst_museums[museum_code]
+                key = (dst_museum_id, src_artwork.original_id)
 
-                existing = (
-                    dst_session.query(Artwork)
-                    .filter_by(museum_id=dst_museum_id, original_id=src_artwork.original_id)
-                    .first()
-                )
+                if not force_update and key in existing_keys:
+                    skipped += 1
+                    continue
 
-                if existing:
-                    target = existing
-                    updated += 1
-                else:
-                    target = Artwork(museum_id=dst_museum_id, original_id=src_artwork.original_id)
-                    dst_session.add(target)
-                    inserted += 1
+                if force_update:
+                    existing = (
+                        dst_session.query(Artwork)
+                        .filter_by(museum_id=dst_museum_id, original_id=src_artwork.original_id)
+                        .first()
+                    )
+                    if existing:
+                        for k, v in _row_dict(src_artwork, dst_museum_id).items():
+                            setattr(existing, k, v)
+                        updated += 1
+                        continue
 
-                # Copy every column except the primary key and museum_id/original_id
-                target.accession_number = src_artwork.accession_number
-                target.title = src_artwork.title
-                target.artist = src_artwork.artist
-                target.artist_display = src_artwork.artist_display
-                target.artist_bio = src_artwork.artist_bio
-                target.artist_nationality = src_artwork.artist_nationality
-                target.artist_birth_year = src_artwork.artist_birth_year
-                target.artist_death_year = src_artwork.artist_death_year
-                target.date_display = src_artwork.date_display
-                target.date_start = src_artwork.date_start
-                target.date_end = src_artwork.date_end
-                target.medium = src_artwork.medium
-                target.dimensions = src_artwork.dimensions
-                target.height_cm = src_artwork.height_cm
-                target.width_cm = src_artwork.width_cm
-                target.depth_cm = src_artwork.depth_cm
-                target.diameter_cm = src_artwork.diameter_cm
-                target.department = src_artwork.department
-                target.artwork_type = src_artwork.artwork_type
-                target.culture = src_artwork.culture
-                target.style = src_artwork.style
-                target.is_public_domain = src_artwork.is_public_domain
-                target.credit_line = src_artwork.credit_line
-                target.is_on_view = src_artwork.is_on_view
-                target.is_highlight = src_artwork.is_highlight
-                target.is_boosted = src_artwork.is_boosted
-                target.boost_rank = src_artwork.boost_rank
-                target.has_not_been_viewed_much = src_artwork.has_not_been_viewed_much
-                target.description = src_artwork.description
-                target.short_description = src_artwork.short_description
-                target.provenance = src_artwork.provenance
-                target.inscriptions = src_artwork.inscriptions
-                target.fun_fact = src_artwork.fun_fact
-                target.style_titles = src_artwork.style_titles
-                target.keywords = src_artwork.keywords
-                target.primary_image_url = src_artwork.primary_image_url
-                target.image_urls = src_artwork.image_urls
-                target.image_path = src_artwork.image_path
-                target.colorfulness = src_artwork.colorfulness
-                target.color_h = src_artwork.color_h
-                target.color_s = src_artwork.color_s
-                target.color_l = src_artwork.color_l
-                target.image_pixel_width = src_artwork.image_pixel_width
-                target.image_pixel_height = src_artwork.image_pixel_height
-                target.quality_scores = src_artwork.quality_scores
-                target.quality_score = src_artwork.quality_score
-                target.created_at = src_artwork.created_at
-                target.updated_at = src_artwork.updated_at
+                to_insert.append(_row_dict(src_artwork, dst_museum_id))
+
+            if to_insert:
+                dst_session.bulk_insert_mappings(Artwork, to_insert)
+                inserted += len(to_insert)
 
             dst_session.commit()
             offset += BATCH_SIZE
             done = min(offset, total)
-            print(f"  {done:,}/{total:,} processed  (+{inserted} new, ~{updated} updated)", end="\r")
+            print(
+                f"  {done:,}/{total:,} processed  "
+                f"(+{inserted} new, ~{updated} updated, {skipped} skipped)",
+                end="\r",
+            )
 
         print()
-        print(f"\nDone. Inserted: {inserted:,}  Updated: {updated:,}  Total: {inserted + updated:,}")
+        print(
+            f"\nDone. Inserted: {inserted:,}  Updated: {updated:,}  "
+            f"Skipped: {skipped:,}  Total processed: {inserted + updated + skipped:,}"
+        )
 
     except Exception as e:
         dst_session.rollback()
@@ -207,4 +244,11 @@ def migrate():
 
 
 if __name__ == "__main__":
-    migrate()
+    parser = argparse.ArgumentParser(description="Migrate artwork DB from SQLite to PostgreSQL.")
+    parser.add_argument(
+        "--force-update",
+        action="store_true",
+        help="Overwrite existing records instead of skipping them (slower).",
+    )
+    args = parser.parse_args()
+    migrate(force_update=args.force_update)

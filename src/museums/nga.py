@@ -23,6 +23,14 @@ from ..config import settings
 from ..download.progress_tracker import BaseProgressTracker
 from ..utils import sanitize_filename, setup_logging
 
+NGA_KEEP_CLASSIFICATIONS = {
+    "Painting",
+    "Drawing",
+    "Print",
+    "Photograph",
+    "Index of American Design",
+}
+
 NGA_OBJECTS_URL = (
     "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata"
     "/main/data/objects.csv"
@@ -178,10 +186,14 @@ class NGAClient(MuseumAPIClient):
                 obj_id = row.get("depictstmsobjectid", "")
                 if obj_id not in objects:
                     continue
+                obj = objects[obj_id]
+                classification = obj.get("classification", "").strip()
+                if classification not in NGA_KEEP_CLASSIFICATIONS:
+                    continue
                 viewtype = row.get("viewtype", "").lower()
                 if viewtype == "primary" or obj_id not in joined:
                     if row.get("uuid", "").strip():
-                        joined[obj_id] = {**objects[obj_id], **row}
+                        joined[obj_id] = {**obj, **row}
 
         self._joined_rows_cache = list(joined.values())
         return self._joined_rows_cache
