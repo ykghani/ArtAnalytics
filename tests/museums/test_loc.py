@@ -85,7 +85,7 @@ class TestLOCClientFormatFilter:
         mock_resp.json.return_value = {"pagination": {"total": 42}}
         with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
             client.get_collection_info()
-            call_params = mock_get.call_args[1]["params"]
+            call_params = mock_get.call_args_list[0][1]["params"]
             assert call_params.get("fa") == "original-format:poster"
 
     def test_get_collection_info_omits_fa_param_when_no_filter(self):
@@ -94,7 +94,7 @@ class TestLOCClientFormatFilter:
         mock_resp.json.return_value = {"pagination": {"total": 0}}
         with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
             client.get_collection_info()
-            call_params = mock_get.call_args[1]["params"]
+            call_params = mock_get.call_args_list[0][1]["params"]
             assert "fa" not in call_params
 
     def test_iter_collection_includes_fa_param_when_filter_set(self):
@@ -106,7 +106,7 @@ class TestLOCClientFormatFilter:
         }
         with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
             list(client._iter_collection_impl())
-            call_params = mock_get.call_args[1]["params"]
+            call_params = mock_get.call_args_list[0][1]["params"]
             assert call_params.get("fa") == "original-format:poster"
 
     def test_iter_collection_omits_fa_param_when_no_filter(self):
@@ -118,5 +118,5 @@ class TestLOCClientFormatFilter:
         }
         with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
             list(client._iter_collection_impl())
-            call_params = mock_get.call_args[1]["params"]
+            call_params = mock_get.call_args_list[0][1]["params"]
             assert "fa" not in call_params

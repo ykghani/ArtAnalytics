@@ -195,7 +195,7 @@ class LOCClient(MuseumAPIClient):
 
     def get_collection_info(self) -> Dict[str, Any]:
         params: Dict[str, Any] = {"fo": "json", "c": 1, "sp": 1}
-        if self.format_filter:
+        if self.format_filter is not None:
             params["fa"] = f"original-format:{self.format_filter}"
         resp = self.session.get(LOC_SEARCH_URL, params=params)
         resp.raise_for_status()
@@ -208,7 +208,7 @@ class LOCClient(MuseumAPIClient):
         if self.progress_tracker and isinstance(self.progress_tracker, LOCProgressTracker):
             start_page = self.progress_tracker.state.last_page
 
-        self.logger.info(f"LOC: starting from page {start_page}" + (f" [format={self.format_filter}]" if self.format_filter else ""))
+        self.logger.info(f"LOC: starting from page {start_page}" + (f" [format={self.format_filter}]" if self.format_filter is not None else ""))
         page = start_page
 
         while True:
@@ -218,7 +218,7 @@ class LOCClient(MuseumAPIClient):
                 "sp": page,
                 "at": "results,pagination",
             }
-            if self.format_filter:
+            if self.format_filter is not None:
                 request_params["fa"] = f"original-format:{self.format_filter}"
             resp = self.session.get(
                 LOC_SEARCH_URL,
