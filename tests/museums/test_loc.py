@@ -1,4 +1,15 @@
-from src.museums.loc import LOCArtworkFactory, _extract_loc_iiif_url
+from unittest.mock import MagicMock, patch
+
+from src.museums.loc import LOCArtworkFactory, LOCClient, _extract_loc_iiif_url
+from src.museums.museum_info import MuseumInfo
+
+
+def _make_museum_info():
+    return MuseumInfo(
+        name="Library of Congress",
+        base_url="https://www.loc.gov/pictures/",
+        code="loc",
+    )
 
 SAMPLE_ITEM = {
     "id": "https://www.loc.gov/item/2002699540/",
@@ -55,3 +66,57 @@ def test_factory_skips_missing_image():
     factory = LOCArtworkFactory()
     no_image = {**SAMPLE_ITEM, "resources": []}
     assert factory.create_metadata(no_image) is None
+
+
+# ---------- LOCClient format_filter tests ----------
+
+class TestLOCClientFormatFilter:
+    def test_default_format_filter_is_none(self):
+        client = LOCClient(museum_info=_make_museum_info())
+        assert client.format_filter is None
+
+    def test_format_filter_stored(self):
+        client = LOCClient(museum_info=_make_museum_info(), format_filter="poster")
+        assert client.format_filter == "poster"
+
+    def test_get_collection_info_includes_fa_param_when_filter_set(self):
+        client = LOCClient(museum_info=_make_museum_info(), format_filter="poster")
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"pagination": {"total": 42}}
+        with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
+            client.get_collection_info()
+            call_params = mock_get.call_args[1]["params"]
+            assert call_params.get("fa") == "original-format:poster"
+
+    def test_get_collection_info_omits_fa_param_when_no_filter(self):
+        client = LOCClient(museum_info=_make_museum_info())
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"pagination": {"total": 0}}
+        with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
+            client.get_collection_info()
+            call_params = mock_get.call_args[1]["params"]
+            assert "fa" not in call_params
+
+    def test_iter_collection_includes_fa_param_when_filter_set(self):
+        client = LOCClient(museum_info=_make_museum_info(), format_filter="poster")
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "results": [],
+            "pagination": {"total": 0, "next": None},
+        }
+        with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
+            list(client._iter_collection_impl())
+            call_params = mock_get.call_args[1]["params"]
+            assert call_params.get("fa") == "original-format:poster"
+
+    def test_iter_collection_omits_fa_param_when_no_filter(self):
+        client = LOCClient(museum_info=_make_museum_info())
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "results": [],
+            "pagination": {"total": 0, "next": None},
+        }
+        with patch.object(client.session, "get", return_value=mock_resp) as mock_get:
+            list(client._iter_collection_impl())
+            call_params = mock_get.call_args[1]["params"]
+            assert "fa" not in call_params
