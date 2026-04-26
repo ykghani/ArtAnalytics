@@ -197,6 +197,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "client_class": LOCClient,
             "processor_class": LOCImageProcessor,
             "tracker_class": LOCProgressTracker,
+            "format_filter": "poster",
         },
         "rijks": {
             **base_config,
@@ -259,6 +260,9 @@ def download_museum_collection(museum_id: str, limit: Optional[int] = None) -> N
         if museum_id == "mia":
             client_params["repo_path"] = museum_config["repo_path"]
             client_params["repo_url"] = museum_config["repo_url"]
+
+        if "format_filter" in museum_config:
+            client_params["format_filter"] = museum_config["format_filter"]
 
         client = museum_config["client_class"](**client_params)
 

@@ -4,6 +4,7 @@ Collection: Prints & Photographs (https://www.loc.gov/pictures/?fo=json)
 Pagination: sp=1, sp=2, … (page number, c=100 items per page)
 Rights filter: items with "no known restrictions" in rights_advisory
 Image URL: highest-width file with "image-services/iiif" in URL, or largest JPEG fallback
+Format filter: optional fa=original-format:<value> facet (e.g. "poster", "photo", "print")
 """
 import re
 import time
@@ -181,17 +182,22 @@ class LOCClient(MuseumAPIClient):
         api_key: Optional[str] = None,
         cache_file: Optional[Path] = None,
         progress_tracker: Optional[LOCProgressTracker] = None,
+        format_filter: Optional[str] = None,
     ):
         super().__init__(museum_info=museum_info, api_key=api_key, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = LOCArtworkFactory()
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "loc")
+        self.format_filter = format_filter
 
     def _get_auth_header(self) -> str:
         return ""
 
     def get_collection_info(self) -> Dict[str, Any]:
-        resp = self.session.get(LOC_SEARCH_URL, params={"fo": "json", "c": 1, "sp": 1})
+        params: Dict[str, Any] = {"fo": "json", "c": 1, "sp": 1}
+        if self.format_filter:
+            params["fa"] = f"original-format:{self.format_filter}"
+        resp = self.session.get(LOC_SEARCH_URL, params=params)
         resp.raise_for_status()
         pagination = resp.json().get("pagination") or {}
         return {"total_objects": pagination.get("total", 0)}
@@ -202,13 +208,21 @@ class LOCClient(MuseumAPIClient):
         if self.progress_tracker and isinstance(self.progress_tracker, LOCProgressTracker):
             start_page = self.progress_tracker.state.last_page
 
-        self.logger.info(f"LOC: starting from page {start_page}")
+        self.logger.info(f"LOC: starting from page {start_page}" + (f" [format={self.format_filter}]" if self.format_filter else ""))
         page = start_page
 
         while True:
+            request_params: Dict[str, Any] = {
+                "fo": "json",
+                "c": page_size,
+                "sp": page,
+                "at": "results,pagination",
+            }
+            if self.format_filter:
+                request_params["fa"] = f"original-format:{self.format_filter}"
             resp = self.session.get(
                 LOC_SEARCH_URL,
-                params={"fo": "json", "c": page_size, "sp": page, "at": "results,pagination"},
+                params=request_params,
                 timeout=30,
             )
             resp.raise_for_status()
