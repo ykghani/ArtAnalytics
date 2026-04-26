@@ -1,11 +1,13 @@
 """Te Papa Tongarewa (Museum of New Zealand) museum client.
 
-API: https://data.tepapa.govt.nz/collection/search
+API: https://data.tepapa.govt.nz/collection
   - Requires free API key: https://data.tepapa.govt.nz/docs/
   - Set env var: TEPAPA_API_KEY=your_key
   - Auth method: x-api-key request header
-  - POST requests with JSON body
-  - Filter: hasRepresentation.rights.allowsDownload = true
+  - GET /object?q={art_type} for each art type
+  - Rights filter: "No Known Copyright Restrictions" or "CC 0" = public domain
+  - Collections targeted: Art, Photography, TaongaMaori, PacificCultures
+  - hasRepresentation items ARE the media objects (contentUrl is direct, not nested)
 """
 import time
 from dataclasses import dataclass, field
@@ -21,13 +23,65 @@ from ..config import settings
 from ..download.progress_tracker import BaseProgressTracker
 from ..utils import sanitize_filename, setup_logging
 
-def _extract_downloadable_media(representations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Return first representation where rights.allowsDownload is True."""
+# Art-type queries — each returns results under or near 50K so they can be fully paginated.
+# Larger types (drawings, prints, photographs) are included but capped at the API's 50K limit.
+ART_QUERIES = [
+    "paintings",
+    "watercolours",
+    "watercolors",
+    "sketches",
+    "engravings",
+    "etchings",
+    "lithographs",
+    "posters",
+    "portraits",
+    "pastels",
+    "gouaches",
+    "drawings",   # 54K — paginated to limit
+    "prints",     # 90K — paginated to limit
+    "photographs", # 130K — paginated to limit
+]
+
+# Only keep images from these collections
+ART_COLLECTIONS = {"Art", "Photography", "TaongaMaori", "PacificCultures", "History", "Plants", "Insects"}
+
+# Minimum image dimension (pixels) for screen-worthy display quality
+MIN_DIMENSION = 1000
+
+PUBLIC_DOMAIN_RIGHTS = ("no known copyright", "cc 0", "cc0", "public domain mark")
+
+
+def _is_public_domain(rights_title: str) -> bool:
+    lower = rights_title.lower()
+    return any(pd in lower for pd in PUBLIC_DOMAIN_RIGHTS)
+
+
+def _extract_best_representation(representations: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the best downloadable public-domain representation.
+
+    The hasRepresentation items ARE the media objects — contentUrl is directly
+    on the rep, not nested under a 'media' sub-key.
+    """
+    best = None
+    best_pixels = 0
     for rep in representations or []:
         rights = rep.get("rights") or {}
-        if rights.get("allowsDownload"):
-            return rep.get("media") or None
-    return None
+        if not rights.get("allowsDownload"):
+            continue
+        if not _is_public_domain(rights.get("title", "")):
+            continue
+        content_url = rep.get("contentUrl")
+        if not content_url:
+            continue
+        w = rep.get("width") or 0
+        h = rep.get("height") or 0
+        if w < MIN_DIMENSION and h < MIN_DIMENSION:
+            continue
+        pixels = w * h
+        if pixels > best_pixels:
+            best = rep
+            best_pixels = pixels
+    return best
 
 
 def _extract_artist(production: List[Dict[str, Any]]) -> str:
@@ -38,14 +92,19 @@ def _extract_artist(production: List[Dict[str, Any]]) -> str:
     return contributor.get("title", "Unknown Artist") or "Unknown Artist"
 
 
-def _extract_license(representations: List[Dict[str, Any]]) -> str:
-    for rep in representations or []:
-        rights = rep.get("rights") or {}
-        rt = rights.get("rightsType") or {}
-        val = rt.get("value", "")
-        if val:
-            return val
-    return ""
+def _extract_date(production: List[Dict[str, Any]], data: Dict[str, Any]) -> Optional[str]:
+    if production:
+        p = production[0]
+        verbatim = p.get("verbatimCreatedDate") or p.get("createdDate")
+        if verbatim:
+            return str(verbatim)
+    return data.get("date")
+
+
+def _extract_type(data: Dict[str, Any]) -> Optional[str]:
+    type_of = data.get("isTypeOf") or []
+    labels = [c.get("prefLabel", "") for c in type_of if c.get("prefLabel")]
+    return ", ".join(labels) if labels else data.get("type")
 
 
 class TePapaArtworkFactory(ArtworkMetadataFactory):
@@ -60,46 +119,52 @@ class TePapaArtworkFactory(ArtworkMetadataFactory):
             if not obj_id:
                 return None
 
-            representations = data.get("hasRepresentation") or []
-            media = _extract_downloadable_media(representations)
-            if media is None:
+            collection = data.get("collection") or ""
+            if isinstance(collection, list):
+                collection = collection[0] if collection else ""
+
+            if collection not in ART_COLLECTIONS:
                 return None
 
-            content_url = media.get("contentUrl")
-            if not content_url:
+            representations = data.get("hasRepresentation") or []
+            rep = _extract_best_representation(representations)
+            if rep is None:
                 return None
+
+            content_url = rep.get("contentUrl")
+            rights_title = (rep.get("rights") or {}).get("title", "")
 
             title = data.get("title", "Untitled") or "Untitled"
-            artist = _extract_artist(data.get("production") or [])
-            license_str = _extract_license(representations)
-            is_public_domain = (
-                "cc0" in license_str.lower() or "public domain" in license_str.lower()
-            )
+            production = data.get("production") or []
+            artist = _extract_artist(production)
+            date_display = _extract_date(production, data)
+            artwork_type = _extract_type(data)
 
             keywords = [
-                s.get("value", "")
-                for s in data.get("subject") or []
-                if s.get("value")
+                s.get("value", "") or s.get("prefLabel", "")
+                for s in (data.get("subject") or [])
+                if s.get("value") or s.get("prefLabel")
             ]
 
             return ArtworkMetadata(
                 id=str(obj_id),
-                accession_number=str(obj_id),
+                accession_number=data.get("identifier") or str(obj_id),
                 title=title,
                 artist=artist,
-                date_display=data.get("date"),
-                artwork_type=data.get("type"),
+                artist_display=artist,
+                date_display=date_display,
+                artwork_type=artwork_type,
                 description=data.get("description"),
                 keywords=keywords,
-                is_public_domain=is_public_domain,
-                credit_line=license_str or None,
+                is_public_domain=True,
+                credit_line=rights_title or None,
                 primary_image_url=content_url,
                 image_urls={"full": content_url},
-                image_pixel_width=media.get("width"),
-                image_pixel_height=media.get("height"),
+                image_pixel_width=rep.get("width"),
+                image_pixel_height=rep.get("height"),
             )
         except Exception as e:
-            self.logger.error(f"Error creating metadata for Te Papa object: {e}")
+            self.logger.error(f"Error creating metadata for Te Papa object {data.get('id')}: {e}")
             return None
 
 
@@ -111,7 +176,8 @@ class TePapaProgressState:
     success_ids: Set[str] = field(default_factory=set)
     failed_ids: Set[str] = field(default_factory=set)
     error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    last_from: int = 0
+    current_query_index: int = 0
+    current_offset: int = 0
     total_objects: int = 0
 
 
@@ -127,7 +193,8 @@ class TePapaProgressTracker(BaseProgressTracker):
             "success_ids": list(self.state.success_ids),
             "failed_ids": list(self.state.failed_ids),
             "error_log": self.state.error_log,
-            "last_from": self.state.last_from,
+            "current_query_index": self.state.current_query_index,
+            "current_offset": self.state.current_offset,
             "total_objects": self.state.total_objects,
         }
 
@@ -136,12 +203,21 @@ class TePapaProgressTracker(BaseProgressTracker):
         self.state.success_ids = set(data.get("success_ids", []))
         self.state.failed_ids = set(data.get("failed_ids", []))
         self.state.error_log = data.get("error_log", {})
-        self.state.last_from = data.get("last_from", 0)
+        self.state.current_query_index = data.get("current_query_index", 0)
+        self.state.current_offset = data.get("current_offset", 0)
         self.state.total_objects = data.get("total_objects", 0)
 
 
 class TePapaClient(MuseumAPIClient):
-    """Te Papa Tongarewa (Museum of New Zealand) API Client."""
+    """Te Papa Tongarewa (Museum of New Zealand) API Client.
+
+    Iterates through a set of art-type queries against GET /object.
+    Filters for public-domain items in art-relevant collections with
+    high-resolution images suitable for screen display.
+    """
+
+    # Hard ceiling imposed by the API's Elasticsearch configuration
+    API_PAGINATION_LIMIT = 49900
 
     def __init__(
         self,
@@ -150,98 +226,106 @@ class TePapaClient(MuseumAPIClient):
         cache_file: Optional[Path] = None,
         progress_tracker: Optional[BaseProgressTracker] = None,
     ):
-        # Pass None for api_key to base class — Te Papa uses x-api-key header, not Authorization
         super().__init__(museum_info=museum_info, api_key=None, cache_file=cache_file)
         self.progress_tracker = progress_tracker
         self.artwork_factory = TePapaArtworkFactory()
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "tepapa")
         if api_key:
-            self.session.headers.update({"x-api-key": api_key})
+            self.session.headers.update({
+                "x-api-key": api_key,
+                "Accept": "application/json;profiles=tepapa.collections.api.v3",
+            })
 
     def _get_auth_header(self) -> str:
         return ""
 
     def get_collection_info(self) -> Dict[str, Any]:
-        body = {"query": "", "size": 1, "from": 0}
-        resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
+        resp = self.session.get(
+            f"{self.museum_info.base_url}/object",
+            params={"size": 1},
+            timeout=30,
+        )
         resp.raise_for_status()
         meta = resp.json().get("_metadata") or {}
         total = (meta.get("resultset") or {}).get("count", 0)
         return {"total_objects": total}
 
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
-        page_size = 100
-        start_from = 0
-        if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
-            start_from = self.progress_tracker.state.last_from
+        tracker = self.progress_tracker
+        start_query_idx = 0
+        start_offset = 0
+        if tracker and isinstance(tracker, TePapaProgressTracker):
+            start_query_idx = tracker.state.current_query_index
+            start_offset = tracker.state.current_offset
 
-        offset = start_from
-        self.logger.info(f"Starting Te Papa collection iteration from offset {offset}")
+        for query_idx in range(start_query_idx, len(ART_QUERIES)):
+            query = ART_QUERIES[query_idx]
 
-        body = {
-            "query": "",
-            "size": page_size,
-            "from": offset,
-            "filters": [
-                {"field": "hasRepresentation.rights.allowsDownload", "keyword": "true"}
-            ],
-        }
-        resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+            # Reset offset when moving to a new query
+            offset = start_offset if query_idx == start_query_idx else 0
+            start_offset = 0  # Only use saved offset for the first resumed query
 
-        total = (data.get("_metadata") or {}).get("resultset", {}).get("count", 0)
-        self.logger.info(f"Te Papa total downloadable artworks: {total}")
+            self.logger.info(f"Te Papa: starting query '{query}' from offset {offset}")
 
-        if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
-            self.progress_tracker.state.total_objects = total
+            # Probe total for this query
+            probe = self.session.get(
+                f"{self.museum_info.base_url}/object",
+                params={"q": query, "size": 1, "from": 0},
+                timeout=30,
+            )
+            probe.raise_for_status()
+            probe_meta = probe.json().get("_metadata") or {}
+            query_total = min(
+                (probe_meta.get("resultset") or {}).get("count", 0),
+                self.API_PAGINATION_LIMIT,
+            )
+            self.logger.info(f"Te Papa query '{query}': {query_total} items (capped at {self.API_PAGINATION_LIMIT})")
 
-        items = data.get("results") or []
-        yield from self._process_page(items)
-        offset += page_size
+            page_size = 100
+            while offset < query_total:
+                resp = self.session.get(
+                    f"{self.museum_info.base_url}/object",
+                    params={"q": query, "size": page_size, "from": offset},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                items = resp.json().get("results") or []
+                if not items:
+                    break
 
-        if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
-            self.progress_tracker.state.last_from = offset
-            self.progress_tracker._save_progress()
+                for item in items:
+                    item_id = str(item.get("id", ""))
+                    if not item_id:
+                        continue
+                    if tracker and tracker.is_processed(item_id):
+                        continue
+                    metadata = self.artwork_factory.create_metadata(item)
+                    if metadata:
+                        yield metadata
 
-        while offset < total:
-            body = {
-                "query": "",
-                "size": page_size,
-                "from": offset,
-                "filters": [
-                    {"field": "hasRepresentation.rights.allowsDownload", "keyword": "true"}
-                ],
-            }
-            resp = self.session.post(f"{self.museum_info.base_url}/search", json=body, timeout=30)
-            resp.raise_for_status()
-            items = resp.json().get("results") or []
-            if not items:
-                break
+                offset += page_size
 
-            yield from self._process_page(items)
-            offset += page_size
+                if tracker and isinstance(tracker, TePapaProgressTracker):
+                    tracker.state.current_query_index = query_idx
+                    tracker.state.current_offset = offset
+                    tracker._save_progress()
 
-            if self.progress_tracker and isinstance(self.progress_tracker, TePapaProgressTracker):
-                self.progress_tracker.state.last_from = offset
-                self.progress_tracker._save_progress()
+                self.logger.progress(
+                    f"Te Papa query '{query}': offset {offset}/{query_total}"
+                )
+                time.sleep(self.museum_info.rate_limit)
 
-            self.logger.progress(f"Te Papa pagination: processed up to offset {offset}/{total}")
-            time.sleep(self.museum_info.rate_limit)
+            # Move to next query
+            if tracker and isinstance(tracker, TePapaProgressTracker):
+                tracker.state.current_query_index = query_idx + 1
+                tracker.state.current_offset = 0
+                tracker._save_progress()
 
-    def _process_page(self, items: List[Dict[str, Any]]) -> Iterator[ArtworkMetadata]:
-        for item in items:
-            item_id = item.get("id")
-            if item_id and self.progress_tracker and \
-               self.progress_tracker.is_processed(str(item_id)):
-                continue
-            metadata = self.artwork_factory.create_metadata(item)
-            if metadata:
-                yield metadata
+        self.logger.info("Te Papa: all art queries complete")
 
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
-        url = f"{self.museum_info.base_url}/{artwork_id}"
-        resp = self.session.get(url)
+        url = f"{self.museum_info.base_url}/object/{artwork_id}"
+        resp = self.session.get(url, timeout=30)
         resp.raise_for_status()
         return self.artwork_factory.create_metadata(resp.json())
 

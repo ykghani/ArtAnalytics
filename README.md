@@ -216,38 +216,42 @@ The downloader automatically filters for:
 ### Current Workflow (Local Development)
 
 ```
-Museum APIs → Downloader → SQLite (local) → Migration Script → PostgreSQL (Railway)
+Museum APIs → Downloader → SQLite (local) → post_download_sync.py → PostgreSQL (Railway)
 ```
 
-**Step 1: Download metadata and images**
+**Step 1: Download metadata (and optionally images)**
 ```bash
 cd ~/GitHub/ArtServe/ArtServe-Downloader
-uv run python main.py met
+uv run python main.py tepapa
 ```
 - Fetches artwork metadata from museum APIs
-- Downloads images to `data/met/images/`
-- Saves metadata to `data/artwork.db` (SQLite)
-- Tracks progress in `data/met/cache/processed_ids.json`
+- Downloads images to `data/{museum}/images/` (if `DOWNLOAD_IMAGES=true`)
+- Saves metadata, pixel dimensions, and quality scores to `data/artwork.db` (SQLite)
+- Tracks progress — safe to interrupt and resume
 
-**Step 2: Migrate to production database**
+**Step 2: Sync to production database (one command)**
 ```bash
 cd ~/GitHub/ArtServe/ArtServe-Backend
+uv run python scripts/post_download_sync.py tepapa
 
-# Migration uses DATABASE_URL from backend .env file
-uv run python scripts/migrate_from_sqlite.py
-
-# Optional: Limit migration for testing
-uv run python scripts/migrate_from_sqlite.py --limit 1000
-
-# Skip confirmation prompt
-uv run python scripts/migrate_from_sqlite.py --yes
+# Test with a small batch first:
+uv run python scripts/post_download_sync.py tepapa --limit 10
 ```
 
+This single script handles everything:
+1. Ensures the museum row exists in PostgreSQL (idempotent)
+2. Migrates artworks from SQLite → PostgreSQL, skipping existing records
+3. Backfills quality scores for any records missing them (no-op if SQLite already had scores)
+
+**Quality scores are preserved from SQLite** — no redundant recalculation for museums
+that store pixel dimensions at download time (tepapa, mia, smk). For IIIF-based museums
+(rijks, nga) the backfill step fetches dimensions from IIIF APIs as needed.
+
 **Migration Features:**
-- ✅ Deduplication - skips artworks already in PostgreSQL
-- ✅ Batch processing - efficient bulk inserts (1000 per batch)
-- ✅ Progress reporting - shows migration status
-- ✅ Museum ID remapping - handles different ID schemes
+- ✅ Idempotent — safe to run multiple times, skips existing records
+- ✅ Preserves quality scores and pixel dimensions from SQLite
+- ✅ Batch processing — efficient bulk inserts (1000 per batch)
+- ✅ Progress reporting — shows counts at each step
 
 ### Data Storage
 

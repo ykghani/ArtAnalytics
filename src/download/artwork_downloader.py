@@ -54,6 +54,7 @@ class ArtworkDownloader:
         self._retry_count = 0
         self._download_count = 0
         self._total_size_bytes = 0
+        self._download_images = False
 
         # Initialize database and museums (one-time setup)
         self.db = Database(settings.database_path)
@@ -212,6 +213,7 @@ class ArtworkDownloader:
         # Batch processing buffers
         batch_buffer = []
         download_images = getattr(self.settings, 'download_images', True)  # Default True for backward compatibility
+        self._download_images = download_images
 
         # Track successful downloads for limit enforcement
         successful_downloads = 0
@@ -445,33 +447,39 @@ class ArtworkDownloader:
         """Generate summary statistics for the download process."""
         stats = self.progress_tracker.get_statistics()
 
-        total_size_gb = self._total_size_bytes / (1024**3)
-        avg_size_mb = (self._total_size_bytes / max(stats["successful"], 1)) / (1024**2)
-
         success_rate = 0
         if stats["total_processed"] > 0:
             success_rate = (stats["successful"] / stats["total_processed"]) * 100
 
-        return {
+        report = {
+            "download_mode": "images + metadata" if self._download_images else "metadata only (set DOWNLOAD_IMAGES=true to download images)",
             "total_processed": stats["total_processed"],
-            "successful_downloads": stats["successful"],
+            "successful": stats["successful"],
             "failed_downloads": stats["failed"],
             "success_rate": f"{success_rate:.2f}%",
-            "total_storage_used": f"{total_size_gb:.2f}GB",
-            "average_file_size": f"{avg_size_mb:.2f}MB",
             "error_count": stats["error_count"],
         }
+
+        if self._download_images:
+            total_size_gb = self._total_size_bytes / (1024**3)
+            avg_size_mb = (self._total_size_bytes / max(stats["successful"], 1)) / (1024**2)
+            report["total_storage_used"] = f"{total_size_gb:.2f}GB"
+            report["average_file_size"] = f"{avg_size_mb:.2f}MB"
+
+        return report
 
     def _log_summary(self, summary: Dict[str, Any]) -> None:
         self.logger.progress("=" * 50)
         self.logger.progress("DOWNLOAD PROCESS SUMMARY")
         self.logger.progress("=" * 50)
+        self.logger.progress(f"Download Mode: {summary['download_mode']}")
         self.logger.progress(f"Total Artworks Processed: {summary['total_processed']}")
-        self.logger.progress(f"Successful Downloads: {summary['successful_downloads']}")
-        self.logger.progress(f"Failed Downloads: {summary['failed_downloads']}")
+        self.logger.progress(f"Successful: {summary['successful']}")
+        self.logger.progress(f"Failed: {summary['failed_downloads']}")
         self.logger.progress(f"Success Rate: {summary['success_rate']}")
-        self.logger.progress(f"Total Storage Used: {summary['total_storage_used']}")
-        self.logger.progress(f"Average File Size: {summary['average_file_size']}")
+        if "total_storage_used" in summary:
+            self.logger.progress(f"Total Storage Used: {summary['total_storage_used']}")
+            self.logger.progress(f"Average File Size: {summary['average_file_size']}")
         self.logger.progress(f"Error Count: {summary['error_count']}")
 
         if summary.get("error_breakdown"):
