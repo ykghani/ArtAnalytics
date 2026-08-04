@@ -1,5 +1,7 @@
+import json
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any
 from pathlib import Path
 import requests
@@ -55,6 +57,7 @@ class ArtworkDownloader:
         self._download_count = 0
         self._total_size_bytes = 0
         self._download_images = False
+        self._reached_end = False
 
         # Initialize database and museums (one-time setup)
         self.db = Database(settings.database_path)
@@ -242,6 +245,7 @@ class ArtworkDownloader:
                                 self._process_batch(artwork_repo, batch_buffer, download_images)
                                 batch_buffer.clear()
                             self.logger.progress("Reached end of collection")
+                            self._reached_end = True
                             break
 
                         if self.progress_tracker.is_processed(artwork.id):
@@ -291,6 +295,7 @@ class ArtworkDownloader:
 
             summary = self._generate_summary_report()
             self._log_summary(summary)
+            self._write_run_summary(summary)
 
     def _prepare_artwork(
         self,
@@ -452,6 +457,9 @@ class ArtworkDownloader:
             success_rate = (stats["successful"] / stats["total_processed"]) * 100
 
         report = {
+            "museum_code": self.client.museum_info.code,
+            "reached_end_of_collection": self._reached_end,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
             "download_mode": "images + metadata" if self._download_images else "metadata only (set DOWNLOAD_IMAGES=true to download images)",
             "total_processed": stats["total_processed"],
             "successful": stats["successful"],
@@ -467,6 +475,19 @@ class ArtworkDownloader:
             report["average_file_size"] = f"{avg_size_mb:.2f}MB"
 
         return report
+
+    def _write_run_summary(self, summary: Dict[str, Any]) -> None:
+        """Write machine-readable run_summary.json to the museum data directory."""
+        try:
+            out_dir = self.image_processor.output_dir.parent
+            out_dir.mkdir(parents=True, exist_ok=True)
+            summary_path = out_dir / "run_summary.json"
+            tmp_path = summary_path.with_suffix(".json.tmp")
+            with tmp_path.open("w") as f:
+                json.dump(summary, f, indent=2)
+            tmp_path.replace(summary_path)
+        except Exception as e:
+            self.logger.error(f"Failed to write run_summary.json: {e}")
 
     def _log_summary(self, summary: Dict[str, Any]) -> None:
         self.logger.progress("=" * 50)

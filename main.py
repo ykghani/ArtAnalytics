@@ -32,17 +32,15 @@ def download_museum_collection_wrapper(args: tuple) -> None:
         raise
 
 
-def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3, limit: Optional[int] = None) -> None:
-    """Run multiple museum downloaders in parallel
+def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3, limit: Optional[int] = None) -> List[str]:
+    """Run multiple museum downloaders in parallel.
 
-    Args:
-        museum_ids: List of museum IDs to process
-        max_workers: Max number of concurrent downloads
-        limit: Optional limit on number of artworks to download per museum
+    Returns a list of museum IDs that failed (empty = all succeeded).
     """
 
     # Create args for each download task
     download_args = [(museum_id, settings, limit) for museum_id in museum_ids]
+    failed: List[str] = []
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_museum = {
@@ -59,6 +57,9 @@ def run_parallel_downloads(museum_ids: List[str], max_workers: int = 3, limit: O
             except Exception as e:
                 logger = setup_logging(settings.logs_dir, settings.log_level, museum_id)
                 logger.error(f"Download failed for {museum_id}: {e}")
+                failed.append(museum_id)
+
+    return failed
 
 
 def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
@@ -336,21 +337,18 @@ def main():
     else:
         museum_ids = list(settings.museums.keys())
 
-    downloaders = []
     try:
-        run_parallel_downloads(museum_ids, limit=args.limit)
+        failed = run_parallel_downloads(museum_ids, limit=args.limit)
     except KeyboardInterrupt:
-        logger.progress(f"Download process interrupted by user")
-        for downloader in downloaders:  # Print summary for each active downloader
-            try:
-                summary = downloader._generate_summary_report()
-                downloader._log_summary(summary)
-            except Exception as e:
-                logger.error(f"Error generating summary: {e}")
+        logger.progress("Download process interrupted by user")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Error in download process: {e}")
-    finally:
-        sys.exit(0)
+        sys.exit(1)
+
+    if failed:
+        logger.error(f"Museums with errors: {', '.join(failed)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

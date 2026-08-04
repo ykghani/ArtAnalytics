@@ -1,18 +1,14 @@
 from typing import Dict, List, Any, Optional, Iterator, Set
 import requests
 from pathlib import Path
-from PIL import Image
-from io import BytesIO
 import logging
 from dataclasses import dataclass, field
-import time
-import json
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..config import settings
-from ..download.progress_tracker import BaseProgressTracker
+from ..download.progress_tracker import BaseProgressTracker, ProgressState
 from .schemas import ArtworkMetadata, MuseumInfo, CMAArtworkFactory
-from ..utils import sanitize_filename, setup_logging
+from ..utils import setup_logging
 
 
 class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
@@ -89,12 +85,9 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
             with open(self.data_dump_path) as f:
                 artworks = json.load(f)
 
-            start_index = 0
-            if isinstance(self.progress_tracker, CMAProgressTracker):
-                start_index = getattr(
-                    self.progress_tracker.state, "last_processed_index", 0
-                )
-                self.progress_tracker.state.total_objects = len(artworks)
+            start_index = getattr(getattr(self.progress_tracker, "state", None), "last_processed_index", 0)
+            if self.progress_tracker:
+                self.progress_tracker.note_total(len(artworks))
                 self.logger.info(
                     f"Starting from index {start_index} of {len(artworks)} total objects"
                 )
@@ -103,8 +96,8 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                 try:
                     metadata = self.artwork_factory.create_metadata(artwork)
                     if metadata and metadata.is_public_domain:
-                        if isinstance(self.progress_tracker, CMAProgressTracker):
-                            self.progress_tracker.state.last_processed_index = idx
+                        if self.progress_tracker:
+                            self.progress_tracker.note_index(idx)
                         yield metadata
                 except Exception as e:
                     self.logger.error(f"Error processing artwork at index {idx}: {e}")
@@ -112,11 +105,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
         # Stream JSON using ijson (memory-efficient)
         try:
-            start_index = 0
-            if isinstance(self.progress_tracker, CMAProgressTracker):
-                start_index = getattr(
-                    self.progress_tracker.state, "last_processed_index", 0
-                )
+            start_index = getattr(getattr(self.progress_tracker, "state", None), "last_processed_index", 0)
 
             self.logger.info(f"Streaming JSON from {self.data_dump_path} (starting at index {start_index})")
 
@@ -131,8 +120,8 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                     try:
                         metadata = self.artwork_factory.create_metadata(artwork)
                         if metadata and metadata.is_public_domain:
-                            if isinstance(self.progress_tracker, CMAProgressTracker):
-                                self.progress_tracker.state.last_processed_index = idx
+                            if self.progress_tracker:
+                                self.progress_tracker.note_index(idx)
                             yield metadata
                     except Exception as e:
                         self.logger.error(
@@ -180,9 +169,8 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                 try:
                     artwork = self._get_artwork_details_impl(str(artwork_id))
                     if artwork:
-                        if isinstance(self.progress_tracker, CMAProgressTracker):
-                            self.progress_tracker.state.total_objects = len(artwork_ids)
-                            self.progress_tracker.state.last_object_id = str(artwork_id)
+                        if self.progress_tracker:
+                            self.progress_tracker.note_total(len(artwork_ids))
                         self.logger.artwork(
                             f"Successfully processed artwork {artwork_id}"
                         )
@@ -197,7 +185,7 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
 
     def _get_artwork_ids(self, **params) -> List[int]:
         """Get list of artwork IDs matching search parameters"""
-        all_ids = self._load_cached_object_ids()
+        all_ids = self._load_cached_ids(self.object_ids_cache_file)
         if all_ids is not None:
             self.logger.progress(f"List of artwork ids loaded from cache")
             return all_ids
@@ -235,68 +223,14 @@ class CMAClient(MuseumAPIClient):  # Renamed from ClevelandClient
                 if skip >= total:
                     break
 
-            if all_ids:  # Only cache if we got actual IDs
-                self._save_object_ids_cache(all_ids)
+            if all_ids:
+                self._save_cached_ids(self.object_ids_cache_file, all_ids)
             return all_ids
 
         except requests.RequestException as e:
             self.logger.error(f"Error fetching artwork IDs: {e}")
             raise
 
-    def _get_unprocessed_ids(self, artwork_ids: List[int]) -> List[int]:
-        """Filter out already processed IDs"""
-        if not self.progress_tracker:
-            return artwork_ids
-
-        str_ids = set(str(id) for id in artwork_ids)
-        processed_ids = self.progress_tracker.state.processed_ids
-        unprocessed_ids = str_ids - processed_ids
-
-        return sorted(int(id) for id in unprocessed_ids)
-
-    def _load_cached_object_ids(self) -> Optional[List[int]]:
-        """Load artwork IDs from cache file if it exists and is recent"""
-        if not self.object_ids_cache_file or not self.object_ids_cache_file.exists():
-            self.logger.debug("No cache file found or specified")
-            return None
-
-        try:
-            cache_stat = self.object_ids_cache_file.stat()
-            cache_age = time.time() - cache_stat.st_mtime
-
-            # Cache expires after 24 hours
-            if cache_age > 60 * 60 * 24:
-                self.logger.debug("Cache file expired (older than 24 hours)")
-                return None
-
-            with self.object_ids_cache_file.open("r") as f:
-                cached_ids = json.load(f)
-                self.logger.debug(
-                    f"Successfully loaded {len(cached_ids)} IDs from cache"
-                )
-                return cached_ids
-        except Exception as e:
-            self.logger.error(f"Failed to load artwork IDs cache: {e}")
-            # Delete invalid cache file
-            try:
-                self.object_ids_cache_file.unlink(missing_ok=True)
-            except Exception as del_e:
-                self.logger.error(f"Failed to delete invalid cache file: {del_e}")
-            return None
-
-    def _save_object_ids_cache(self, artwork_ids: List[int]) -> None:
-        """Save artwork IDs to cache file"""
-        if not self.object_ids_cache_file:
-            return
-
-        try:
-            with self.object_ids_cache_file.open("w") as f:
-                json.dump(artwork_ids, f)
-            self.logger.debug(
-                f"Successfully saved {len(artwork_ids)} artwork IDs to the cache"
-            )
-        except Exception as e:
-            self.logger.error(f"Failed to save artwork IDs cache: {e}")
 
     def _get_artwork_details_impl(self, artwork_id: str) -> Optional[ArtworkMetadata]:
         """Implement artwork details fetching for Cleveland"""
@@ -321,48 +255,11 @@ class CMAImageProcessor(MuseumImageProcessor):
         super().__init__(output_dir, museum_info)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "cma")
 
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
-        """
-        Process and save artwork image.
-
-        Returns:
-            Tuple of (filepath, width, height) where width and height are in pixels
-        """
-        try:
-            self.logger.debug(f"Processing image for artwork {metadata.id}")
-            image = Image.open(BytesIO(image_data))
-
-            # Capture image dimensions
-            width, height = image.size
-
-            filename = self.generate_filename(metadata)
-            filepath = self.output_dir / filename
-
-            image.save(filepath, format="JPEG", quality=95)
-            self.logger.artwork(f"Saved image to {filepath} ({width}x{height})")
-            return filepath, width, height
-        except Exception as e:
-            self.logger.error(f"Failed to process object {metadata.id}: {str(e)}")
-            raise RuntimeError(f"Failed to process object {metadata.id}: {str(e)}")
-
-    def generate_filename(self, metadata: ArtworkMetadata) -> str:
-        """Generate filename for the artwork"""
-        return sanitize_filename(
-            id=f"CMA_{metadata.id}",
-            title=metadata.title,
-            artist=metadata.artist,
-            max_length=255,
-        )
-
 
 @dataclass
-class CMAProgressState:
-    """Separate state class for CMA progress tracking"""
+class CMAProgressState(ProgressState):
+    """CMA progress state — inherits 4 base fields, adds CMA-specific resume fields."""
 
-    processed_ids: Set[str] = field(default_factory=set)
-    success_ids: Set[str] = field(default_factory=set)
-    failed_ids: Set[str] = field(default_factory=set)
-    error_log: Dict[str, Dict[str, str]] = field(default_factory=dict)
     total_objects: int = 0
     last_processed_index: int = 0
 
@@ -396,3 +293,11 @@ class CMAProgressTracker(BaseProgressTracker):
         self.logger.debug(
             f"Restored state with {len(self.state.processed_ids)} processed items"
         )
+
+    def note_index(self, idx: int, *, total: int = 0) -> None:
+        self.state.last_processed_index = idx
+        if total:
+            self.state.total_objects = total
+
+    def note_total(self, total: int) -> None:
+        self.state.total_objects = total

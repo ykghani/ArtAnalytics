@@ -1,18 +1,12 @@
 from typing import Dict, List, Any, Optional, Iterator, Set
-import time
 import random
 from pathlib import Path
-from PIL import Image
-from io import BytesIO
 import logging
-import json
 from dataclasses import dataclass, field
 from functools import partial
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-
-from requests.sessions import Session as Session
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..config import settings
@@ -45,23 +39,17 @@ class MetClient(MuseumAPIClient):
         """Met does not require authentication"""
         return ""
 
-    def _get_session(self) -> requests.Session:
-        self.logger = setup_logging(settings.logs_dir, settings.log_level, "met")
-        self.logger.debug("Creating Met-specific session with custom retry strategy")
-        session = super()._create_session()
-
-        # Met specific retry strategy with longer timeouts
+    def _customize_session(self, session: requests.Session) -> None:
+        """Apply Met-specific retry strategy, timeouts, and browser-like headers."""
         retry_strategy = Retry(
             total=10, backoff_factor=2, status_forcelist=[429, 500, 502, 503, 504]
         )
-
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("https://", adapter)
         session.mount("http://", adapter)
 
         session.request = partial(session.request, timeout=(30, 300))
 
-        # Add additional headers to make requests look more legitimate and avoid 403s
         session.headers.update({
             "Accept": "application/json,text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.9",
@@ -69,11 +57,6 @@ class MetClient(MuseumAPIClient):
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1",
         })
-
-        self.logger.debug(
-            "Met session configured with custom timeouts, retry strategy, and browser-like headers"
-        )
-        return session
 
     def get_total_objects(self) -> int:
         """Get total number of objects in collection"""
@@ -92,9 +75,8 @@ class MetClient(MuseumAPIClient):
 
     def _get_object_ids(self, **params) -> List[int]:
         """Get list of object IDs matching search parameters"""
-        # Try to load from cache first
         self.logger.debug(f"Attempting to fetch object IDs with params: {params}")
-        cached_ids = self._load_cached_object_ids()
+        cached_ids = self._load_cached_ids(self.object_ids_cache_file)
         if cached_ids is not None:
             self.logger.progress(f"Using cached object IDs ({len(cached_ids)} objects)")
             return cached_ids
@@ -136,65 +118,12 @@ class MetClient(MuseumAPIClient):
                     )
                     time.sleep(wait_time)
 
-        # Save to cache before returning
-        self._save_object_ids_cache(objects)
+        self._save_cached_ids(self.object_ids_cache_file, objects)
         self.logger.progress(
             f"Successfully fetched and cached {len(objects)} total object IDs"
         )
         return objects
 
-    def _get_unprocessed_ids(self, object_ids: List[int]) -> List[int]:
-        """Filter out already processed IDs"""
-        if not self.progress_tracker:
-            return object_ids
-
-        # Convert all IDs to strings for consistent comparison
-        str_ids = set(str(id) for id in object_ids)
-        processed_ids = self.progress_tracker.state.processed_ids
-
-        # Get unprocessed IDs
-        unprocessed_ids = str_ids - processed_ids
-
-        # Convert back to integers and sort
-        return sorted(int(id) for id in unprocessed_ids)
-
-    def _load_cached_object_ids(self) -> Optional[List[int]]:
-        """Load object IDs from cache file if it exists and is recent"""
-        if not self.object_ids_cache_file or not self.object_ids_cache_file.exists():
-            self.logger.debug("No cache file found or specified")
-            return None
-
-        try:
-            cache_stat = self.object_ids_cache_file.stat()
-            cache_age = time.time() - cache_stat.st_mtime
-
-            # Cache expires after 24 hours
-            if cache_age > 60 * 60 * 24:  # 24 hours in seconds
-                self.logger.debug("Cache file expired (older than 24 hours)")
-                return None
-
-            with self.object_ids_cache_file.open("r") as f:
-                cached_ids = json.load(f)
-                self.logger.debug(
-                    f"Successfully loaded {len(cached_ids)} IDs from cache"
-                )
-                return cached_ids
-        except Exception as e:
-            self.logger.warning(f"Failed to load object IDs cache: {str(e)}")
-            return None
-
-    def _save_object_ids_cache(self, object_ids: List[int]) -> None:
-        """Save object IDs to cache file"""
-        if not self.object_ids_cache_file:
-            self.logger.debug("No cache file specified, skipping save")
-            return
-
-        try:
-            with self.object_ids_cache_file.open("w") as f:
-                json.dump(object_ids, f)
-                self.logger.debug(f"Successfully cached {len(object_ids)} object IDs")
-        except Exception as e:
-            self.logger.warning(f"Failed to save object IDs cache: {str(e)}")
 
     def _iter_collection_impl(self, **params) -> Iterator[ArtworkMetadata]:
         """Iterate through collection objects"""
@@ -234,9 +163,8 @@ class MetClient(MuseumAPIClient):
                 try:
                     artwork = self._get_artwork_details_impl(str(object_id))
                     if artwork:
-                        if isinstance(self.progress_tracker, MetProgressTracker):
-                            self.progress_tracker.state.total_objects = len(object_ids)
-                            self.progress_tracker.state.last_object_id = str(object_id)
+                        if self.progress_tracker:
+                            self.progress_tracker.note_total(len(object_ids))
                         self.logger.artwork(
                             f"Successfully processed artwork {object_id}"
                         )
@@ -317,33 +245,6 @@ class MetImageProcessor(MuseumImageProcessor):
         super().__init__(output_dir, museum_info)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "met")
 
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
-        """
-        Process and save artwork image.
-
-        Returns:
-            Tuple of (filepath, width, height) where width and height are in pixels
-        """
-        try:
-            self.logger.debug(f"Processing image for artwork {metadata.id}")
-            image = Image.open(BytesIO(image_data))
-
-            # Capture image dimensions
-            width, height = image.size
-
-            filename = self.generate_filename(metadata)
-            filepath = self.output_dir / filename
-
-            image.save(filepath, format="JPEG", quality=95)
-            self.logger.artwork(f"Saved image to {filepath} ({width}x{height})")
-            return filepath, width, height
-
-        except Exception as e:
-            self.logger.error(
-                f"Failed to process image for artwork {metadata.id}: {str(e)}"
-            )
-            raise RuntimeError(f"Failed to process object {metadata.id}: {str(e)}")
-
     def generate_filename(self, metadata: ArtworkMetadata) -> str:
         """Generate filename for the artwork"""
         self.logger.debug(f"Generating filename for artwork {metadata.id}")
@@ -411,3 +312,6 @@ class MetProgressTracker(BaseProgressTracker):
             f"{len(self.state.success_ids)} successful, "
             f"{len(self.state.failed_ids)} failed"
         )
+
+    def note_total(self, total: int) -> None:
+        self.state.total_objects = total
