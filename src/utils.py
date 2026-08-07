@@ -130,12 +130,26 @@ def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -
     clean_title = clean_text(title)
     clean_artist = clean_text(artist)
 
+    def byte_len(text: str) -> int:
+        return len(text.encode("utf-8"))
+
+    def truncate_to_byte_length(text: str, max_bytes: int) -> str:
+        # Truncate by character, not byte slice, to avoid splitting a
+        # multi-byte UTF-8 character in half.
+        while byte_len(text) > max_bytes and text:
+            text = text[:-1]
+        return text
+
     # Calculate available space for title
     # Format will be: "{aic_id}_{title}_{artist}.jpg"
+    # max_length is a byte limit (filesystems cap filenames at 255 bytes),
+    # so all lengths below must be measured in encoded UTF-8 bytes, not
+    # characters — an accented title can be well under 255 characters but
+    # over 255 bytes once umlauts etc. are encoded.
     extension_length = 4  # ".jpg"
     separators_length = 2  # Two underscores
-    id_length = len(str(id))
-    artist_length = len(clean_artist)
+    id_length = byte_len(str(id))
+    artist_length = byte_len(clean_artist)
 
     # Calculate maximum title length
     max_title_length = max_length - (
@@ -143,12 +157,12 @@ def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -
     )
 
     # Truncate title if necessary
-    if len(clean_title) > max_title_length:
-        clean_title = clean_title[: max_title_length - 3] + "..."
+    if byte_len(clean_title) > max_title_length:
+        clean_title = truncate_to_byte_length(clean_title, max(max_title_length - 3, 0)) + "..."
 
     # Construct final filename
     filename = f"{id}_{clean_title}_{clean_artist}.jpg"
 
-    logging.debug(f"Sanitized filename: {filename} (length: {len(filename)})")
+    logging.debug(f"Sanitized filename: {filename} (length: {byte_len(filename)} bytes)")
 
     return filename

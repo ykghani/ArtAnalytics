@@ -21,6 +21,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
+import requests
 from PIL import Image
 
 from .base import MuseumAPIClient, MuseumImageProcessor
@@ -234,16 +235,25 @@ class BelvedereClient(MuseumAPIClient):
                 if self.progress_tracker and self.progress_tracker.is_processed(object_id):
                     continue
 
-                manifest_resp = self.session.get(
-                    BELVEDERE_MANIFEST_URL_TMPL.format(object_id=object_id), timeout=30
-                )
-                time.sleep(self.museum_info.rate_limit)
-                if manifest_resp.status_code != 200:
-                    self.logger.debug(f"Belvedere: manifest fetch failed for {object_id}: {manifest_resp.status_code}")
+                try:
+                    manifest_resp = self.session.get(
+                        BELVEDERE_MANIFEST_URL_TMPL.format(object_id=object_id), timeout=30
+                    )
+                    time.sleep(self.museum_info.rate_limit)
+                    if manifest_resp.status_code != 200:
+                        self.logger.debug(f"Belvedere: manifest fetch failed for {object_id}: {manifest_resp.status_code}")
+                        continue
+
+                    manifest = manifest_resp.json()
+                    metadata = self.artwork_factory.create_metadata(manifest, object_id)
+                except requests.exceptions.RequestException as e:
+                    # A single object's manifest fetch failing (timeout, connection
+                    # reset, etc.) must not abort the whole collection walk — that
+                    # previously caused a page-440-of-492 run to log "reached end of
+                    # collection" and silently drop the remaining ~650 items.
+                    self.logger.warning(f"Belvedere: manifest request failed for {object_id}, skipping: {e}")
                     continue
 
-                manifest = manifest_resp.json()
-                metadata = self.artwork_factory.create_metadata(manifest, object_id)
                 if metadata:
                     yield metadata
 
