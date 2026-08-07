@@ -73,3 +73,6 @@ poetry.lock.env
 
 # Git worktrees
 .worktrees/
+
+#MCPs
+.mcp.json

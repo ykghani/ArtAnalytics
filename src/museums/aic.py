@@ -1,18 +1,13 @@
 from typing import Dict, Any, Optional, Iterator, Set
 from pathlib import Path
-from PIL import Image
-import logging
-from io import BytesIO
 import json
 from dataclasses import dataclass, field
 
 from .base import MuseumAPIClient, MuseumImageProcessor
 from ..config import settings
-
-# from ..log_level import log_level
 from .schemas import ArtworkMetadata, MuseumInfo, AICArtworkFactory
 from ..download.progress_tracker import BaseProgressTracker, ProgressState
-from ..utils import sanitize_filename, setup_logging
+from ..utils import setup_logging
 
 
 class AICClient(MuseumAPIClient):
@@ -116,10 +111,9 @@ class AICClient(MuseumAPIClient):
                 for artwork in data["data"]:
                     yield self.artwork_factory.create_metadata(artwork)
 
-                if isinstance(self.progress_tracker, AICProgressTracker):
-                    self.progress_tracker.state.last_page = page
+                if self.progress_tracker:
                     total_pages = data.get("pagination", {}).get("total_pages", 0)
-                    self.progress_tracker.state.total_pages = total_pages
+                    self.progress_tracker.note_page(page, total_pages=total_pages)
 
                 page += 1
 
@@ -134,9 +128,9 @@ class AICClient(MuseumAPIClient):
             artwork_files = sorted(list(self.data_dump_path.glob("*.json")))
             total_files = len(artwork_files)
 
-            if isinstance(self.progress_tracker, AICProgressTracker):
-                self.progress_tracker.state.total_files = total_files
-                start_idx = self.progress_tracker.state.last_processed_index
+            if self.progress_tracker:
+                self.progress_tracker.note_index(0, total=total_files)
+                start_idx = self.progress_tracker.state.last_processed_index if hasattr(self.progress_tracker.state, "last_processed_index") else 0
             else:
                 start_idx = 0
 
@@ -150,8 +144,8 @@ class AICClient(MuseumAPIClient):
 
                     metadata = self.artwork_factory.create_metadata(artwork_data)
                     if metadata and metadata.is_public_domain:
-                        if isinstance(self.progress_tracker, AICProgressTracker):
-                            self.progress_tracker.state.last_processed_index = idx
+                        if self.progress_tracker:
+                            self.progress_tracker.note_index(idx)
                             self.progress_tracker._save_progress()
                         yield metadata
 
@@ -185,48 +179,6 @@ class AICImageProcessor(MuseumImageProcessor):
     def __init__(self, output_dir: Path, museum_info: MuseumInfo):
         super().__init__(output_dir, museum_info)
         self.logger = setup_logging(settings.logs_dir, settings.log_level, "aic")
-
-    def process_image(self, image_data: bytes, metadata: ArtworkMetadata) -> tuple[Path, int, int]:
-        """
-        Process and save an artwork image.
-
-        Returns:
-            Tuple of (filepath, width, height) where width and height are in pixels
-        """
-        try:
-            # Open image from bytes
-            self.logger.debug(f"Processing image for artwork {metadata.id}")
-            image = Image.open(BytesIO(image_data))
-
-            # Capture image dimensions
-            width, height = image.size
-
-            # Generate filename and full path
-            filename = self.generate_filename(metadata)
-            filepath = self.output_dir / filename
-
-            # Save the image
-            image.save(filepath, format="JPEG", quality=95)
-            self.logger.artwork(f"Saved image to {filepath} ({width}x{height})")
-            return filepath, width, height
-
-        except Exception as e:
-            self.logger.error(
-                f"Failed to process image for artwork {metadata.id}: {str(e)}"
-            )
-            raise RuntimeError(
-                f"Failed to process image for artwork {metadata.id}: {str(e)}"
-            )
-
-    def generate_filename(self, metadata: ArtworkMetadata) -> str:
-        """Generate a filename for the artwork"""
-        # Clean up artist and title for filename
-        return sanitize_filename(
-            id=f"AIC_{metadata.id}",
-            title=metadata.title,
-            artist=metadata.artist,
-            max_length=255,
-        )
 
 
 @dataclass
@@ -272,11 +224,19 @@ class AICProgressTracker(BaseProgressTracker):
         self.state.last_processed_index = data.get("last_processed_index", 0)
         self.state.total_files = data.get("total_files", 0)
 
+    def note_page(self, page: int, *, total_pages: int = 0) -> None:
+        self.state.last_page = page
+        if total_pages:
+            self.state.total_pages = total_pages
+
+    def note_index(self, idx: int, *, total: int = 0) -> None:
+        self.state.last_processed_index = idx
+        if total:
+            self.state.total_files = total
+
     def update_page(self, page: int) -> None:
-        """Update last processed page numebr"""
         self.state.last_page = page
         self._save_progress()
 
     def get_last_page(self) -> int:
-        """Get last processed page number"""
         return self.state.last_page

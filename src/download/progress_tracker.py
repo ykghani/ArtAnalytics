@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC
 import json
 from pathlib import Path
 from typing import Dict, Set, Union, List, Any, Optional
@@ -91,15 +91,29 @@ class BaseProgressTracker(ABC):
 
         self._load_progress()
 
-    @abstractmethod
     def get_state_dict(self) -> Dict[str, Any]:
-        """Convert current state to serializable dict"""
-        pass
+        """Serialize the 4 base fields. Override to include museum-specific fields."""
+        return {
+            "processed_ids": list(self.state.processed_ids),
+            "success_ids": list(self.state.success_ids),
+            "failed_ids": list(self.state.failed_ids),
+            "error_log": self.state.error_log,
+        }
 
-    @abstractmethod
     def restore_state(self, data: Dict[str, Any]) -> None:
-        """Restore state from dict"""
-        pass
+        """Restore the 4 base fields. Override to handle museum-specific fields."""
+        self.state.processed_ids = set(data.get("processed_ids", []))
+        self.state.success_ids = set(data.get("success_ids", []))
+        self.state.failed_ids = set(data.get("failed_ids", []))
+        self.state.error_log = data.get("error_log", {})
+
+    # Hooks for iteration position tracking — no-ops by default so new museums
+    # can call them unconditionally without needing a tracker subclass.
+    def note_page(self, page: int, *, total_pages: int = 0) -> None: pass
+    def note_offset(self, offset: int, *, total: int = 0) -> None: pass
+    def note_cursor(self, cursor: Optional[str]) -> None: pass
+    def note_index(self, idx: int, *, total: int = 0) -> None: pass
+    def note_total(self, total: int) -> None: pass
 
     def _load_progress(self) -> None:
         """Load progress file with error handling and populate cache."""
