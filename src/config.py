@@ -205,6 +205,10 @@ class Settings(BaseSettings):
     tepapa_user_agent: str = Field(default="TePapa-ArtDownloadBot/1.0", env="TEPAPA_USER_AGENT")
     tepapa_rate_limit: float = Field(default=0.2, env="TEPAPA_RATE_LIMIT")
 
+    belvedere_user_agent: str = Field(default="Belvedere-ArtDownloadBot/1.0", env="BELVEDERE_USER_AGENT")
+    # robots.txt on sammlung.belvedere.at publishes Crawl-delay: 30 — respected here.
+    belvedere_rate_limit: float = Field(default=30.0, env="BELVEDERE_RATE_LIMIT")
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -313,6 +317,17 @@ class Settings(BaseSettings):
                 name=SHARED_MUSEUMS["tepapa"].name,
                 api_key=self.tepapa_api_key,
             ),
+            "belvedere": MuseumConfig(
+                api_base_url="https://sammlung.belvedere.at",
+                user_agent=self.belvedere_user_agent,
+                rate_limit=self.belvedere_rate_limit,
+                contact_email=self.default_contact_email,
+                code="belvedere",
+                # Not in artserve_shared.museums (sibling package unresolved in this
+                # checkout) — passed directly since MuseumConfig allows extra kwargs.
+                name="Belvedere",
+                # api_key intentionally omitted — no authentication required
+            ),
         }
 
     # File System Configuration
@@ -364,6 +379,7 @@ class Settings(BaseSettings):
             "loc": self.data_dir / "loc",
             "rijks": self.data_dir / "rijks",
             "tepapa": self.data_dir / "tepapa",
+            "belvedere": self.data_dir / "belvedere",
         }
 
         for museum, base_dir in self.museum_dirs.items():

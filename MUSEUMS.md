@@ -1,6 +1,6 @@
 # Museum Sources Reference
 
-This document covers all 10 supported museum sources — data types, authentication, rate limits, image handling, and gotchas to know before running a download.
+This document covers all 11 supported museum sources — data types, authentication, rate limits, image handling, and gotchas to know before running a download.
 
 ---
 
@@ -18,6 +18,7 @@ This document covers all 10 supported museum sources — data types, authenticat
 | `loc` | Library of Congress | None | No | 0.5 s | Page number | 1M+ |
 | `rijks` | Rijksmuseum | Query param | **Yes** | 1.0 s | Offset | 360K |
 | `tepapa` | Te Papa Tongarewa | Header | **Yes** | 0.2 s | POST offset | 200K |
+| `belvedere` | Belvedere, Vienna | None | No | 30.0 s | Page number | 5.9K |
 
 Rate limits can be overridden via environment variables (e.g. `RIJKS_RATE_LIMIT=2.0`).
 
@@ -119,6 +120,19 @@ Rate limits can be overridden via environment variables (e.g. `RIJKS_RATE_LIMIT=
 
 ---
 
+### `belvedere` — Belvedere, Vienna
+
+- **Data source:** Gallery Systems eMuseum, IIIF Presentation API v2 + Image API v2 (`https://sammlung.belvedere.at`)
+- **Image URL:** Taken directly from the manifest's first canvas — `sequences[0].canvases[0].images[0].resource["@id"]`, already a full-resolution `.../full/full/0/default.jpg` JPEG
+- **Public domain:** **The full IIIF collection (~14,841 manifests) includes copyrighted works** — a manifest's `attribution` field shows a real rights holder (e.g. `"© Fria Elfen-Frenken"`) for those. There is no rights facet on the JSON endpoints, so the client instead scrapes object IDs from the curated `/opencontent/images?page=N` HTML browse pages (~5,897 CC0 items) and treats that list as the source of truth. `attribution == "null"` on the resulting manifests is used as a secondary defensive check, not the primary filter.
+- **Pagination:** Page-based against the `/opencontent/images` listing (`page=N`, ~12 items/page). Resumes from `last_page`; re-scraping a page on resume is cheap and idempotent since already-processed ids are skipped.
+- **Metadata:** No structured fields — the manifest `metadata` array is always empty. Artist/title/date are best-effort parsed out of the canvas `label` string (e.g. `"Klaus Basset, 1968, Papier, ..., Belvedere, Wien, Inv.-Nr. 11686/17"`); the full label is also kept verbatim in `description` so nothing is lost if parsing misses a field.
+- **Gotcha:** `robots.txt` on `sammlung.belvedere.at` publishes `Crawl-delay: 30`, which applies to both the listing pages and the IIIF endpoints (same host). `belvedere_rate_limit` defaults to `30.0` and a full download issues roughly two requests per item (manifest + image) plus ~492 listing-page requests — **expect ~4-5 days of continuous runtime** for the full 5,897-item set. This is the reason to run it as a detached background process rather than in a foreground shell.
+- **Gotcha:** Some objects have multiple canvases (e.g. front/back, multi-sheet portfolios). Only canvas[0] is downloaded — later canvases are currently ignored.
+- **License:** CC0 1.0 (https://creativecommons.org/publicdomain/zero/1.0/).
+
+---
+
 ## Museums That Require API Keys
 
 ### `rijks` — Rijksmuseum Amsterdam
@@ -172,6 +186,7 @@ SMK_RATE_LIMIT=1.0
 MET_RATE_LIMIT=2.0
 AIC_RATE_LIMIT=1.0
 CMA_RATE_LIMIT=80.0
+BELVEDERE_RATE_LIMIT=30.0
 ```
 
 ---
@@ -188,6 +203,7 @@ All downloaders checkpoint progress to a JSON file in `data/{museum}/progress/`.
 | `rijks` | `last_page` (1-indexed page number) |
 | `tepapa` | `last_from` (0-indexed offset) |
 | `smk` | `last_offset` (0-indexed offset) |
+| `belvedere` | `last_page` (1-indexed `/opencontent/images` page number) |
 | `mia` | `last_bucket`, `last_object_id` |
 | `aic` | offset-based |
 | `met` | last processed object ID |

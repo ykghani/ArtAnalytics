@@ -107,14 +107,14 @@ class ArtworkDownloader:
             # Check for primary image URL first
             if artwork_metadata.primary_image_url:
                 time.sleep(self.rate_limit_delay)
-                response = self.client.session.get(artwork_metadata.primary_image_url)
+                response = self.client.session.get(artwork_metadata.primary_image_url, timeout=30)
                 response.raise_for_status()
                 return response.content
 
             # Legacy/compatibility for AIC image_id if needed
             elif hasattr(artwork_metadata, "image_id") and artwork_metadata.image_id:
                 url = self.client.build_image_url(artwork_metadata.image_id)
-                response = self.client.session.get(url)
+                response = self.client.session.get(url, timeout=30)
                 response.raise_for_status()
                 return response.content
 
