@@ -19,6 +19,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.verify_museum import verify, _detect_format, _url_ok
+from src.museums.schemas import ArtworkMetadata
 
 
 # ---------------------------------------------------------------------------
@@ -40,13 +41,20 @@ def _make_metadata(
     is_public_domain: bool = True,
     image_url: str = "https://example-museum.org/image/1.jpg",
 ):
-    m = MagicMock()
-    m.id = id_
-    m.title = title
-    m.artist = artist
-    m.is_public_domain = is_public_domain
-    m.primary_image_url = image_url
-    return m
+    """A real ArtworkMetadata instance rather than a MagicMock: check E
+    round-trips the sampled artwork through the actual SQLAlchemy write path,
+    which can't bind an arbitrary mock object as a column value. A real
+    (mutable, non-frozen) dataclass instance still supports the existing
+    tests' pattern of overwriting fields like primary_image_url after
+    construction."""
+    return ArtworkMetadata(
+        id=id_,
+        accession_number=f"acc-{id_}",
+        title=title,
+        artist=artist,
+        is_public_domain=is_public_domain,
+        primary_image_url=image_url,
+    )
 
 
 def _make_metadata_list(count: int = 15, **kwargs) -> list:
@@ -134,9 +142,14 @@ def _run_verify(slug: str, artworks: list, http_responses: dict = None, *, api_k
     client = _make_client(artworks)
     config = _fake_museum_config(client, slug)
 
+    # museum_config.name must be a plain string (not an unconfigured MagicMock
+    # attribute) since check E writes it into a real DB column.
+    museum_config_mock = MagicMock(api_key=api_key)
+    museum_config_mock.name = f"{slug} Museum"
+
     settings_mock = MagicMock()
     settings_mock.initialize_paths = MagicMock()
-    settings_mock.museums = {slug: MagicMock(api_key=api_key)}
+    settings_mock.museums = {slug: museum_config_mock}
 
     _call_count = [0]
 
@@ -296,3 +309,37 @@ class TestCheckD:
         result = _run_verify("test", artworks, http_responses=responses)
         # More than half are too small → D fails
         assert result["checks"]["D_images_real"] is False
+
+
+# ---------------------------------------------------------------------------
+# Check E: DB writable — regression coverage for the LACMA bug (loop.py's
+# VALIDATE phase let a museum through even though every write during its
+# later 25,135-item RUN failed with "Museum with code lacma not found",
+# because init_museums() never registered it). Check E round-trips a real
+# sampled artwork through the actual repository write path against a
+# throwaway temp SQLite file to catch that class of failure up front.
+# ---------------------------------------------------------------------------
+
+class TestCheckE:
+    def test_db_write_succeeds_when_museum_registered(self):
+        """The mocked settings.museums (see _run_verify) includes an entry for
+        `slug`, so init_museums() seeds it into the throwaway DB and the write
+        succeeds — exercising the real repository write path end to end
+        against a real (non-mocked) SQLite database and ORM layer."""
+        artworks = _make_metadata_list(15, image_url="https://museum.org/img/1.jpg")
+        result = _run_verify("test", artworks)
+        assert result["checks"]["E_db_writable"] is True
+        assert result["status"] == "PASS"
+
+    def test_db_write_fails_when_museum_not_registered(self):
+        """Reproduces the real production bug: a museum code the crawler
+        yields real artworks for, but that init_museums() never seeded into
+        the museums table. This is exactly what should have failed VALIDATE
+        before the LACMA RUN was ever started."""
+        artworks = _make_metadata_list(15, image_url="https://museum.org/img/1.jpg")
+        with patch("scripts.verify_museum.Database.init_museums", return_value=None):
+            result = _run_verify("not-a-real-museum-code", artworks)
+
+        assert result["checks"]["E_db_writable"] is False
+        assert result["status"] == "FAIL"
+        assert any("not found" in e for e in result.get("errors", []))
