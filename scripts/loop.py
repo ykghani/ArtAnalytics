@@ -287,7 +287,7 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         "claude", "-p", prompt,
         "--allowedTools", "WebSearch,WebFetch,Read,Write",
         "--permission-mode", "bypassPermissions",
-        "--max-turns", "20",
+        "--max-turns", "35",
         "--output-format", "text",
     ]
 

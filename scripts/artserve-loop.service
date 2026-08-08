@@ -2,17 +2,24 @@
 Description=ArtServe Museum Loop Driver
 After=network-online.target
 Wants=network-online.target
+# Limit restart storms (10 restarts within 10 min → stop)
+StartLimitIntervalSec=600
+StartLimitBurst=10
 
 [Service]
 # --- identity ---
 User=pi
-WorkingDirectory=/home/pi/ArtServe/ArtServe-Downloader
+WorkingDirectory=/home/pi/ArtServe/ArtAnalytics
 
 # --- runtime ---
 # uv run ensures the correct virtualenv is active.
-ExecStart=/usr/local/bin/uv run python scripts/loop.py run
+ExecStart=/home/pi/.local/bin/uv run python scripts/loop.py run
 
 # --- environment ---
+# loop.py shells out to bare `claude` and `uv` (RESEARCH/BUILD/TRIAGE/VALIDATE);
+# both live in ~pi/.local/bin, which systemd's default PATH does not include.
+Environment=PATH=/home/pi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 # Set your ntfy.sh topic here for push notifications.
 # Environment=NTFY_TOPIC=your-private-topic
 #
@@ -22,9 +29,6 @@ ExecStart=/usr/local/bin/uv run python scripts/loop.py run
 # --- resilience ---
 Restart=on-failure
 RestartSec=30s
-# Limit restart storms (10 restarts within 10 min → stop)
-StartLimitIntervalSec=600
-StartLimitBurst=10
 
 # --- output ---
 StandardOutput=journal
