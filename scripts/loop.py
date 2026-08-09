@@ -252,12 +252,31 @@ def _run_cmd_capture(cmd: List[str], cwd: Path = PROJECT_ROOT) -> tuple:
 WORKTREE_BASE = PROJECT_ROOT / ".loop-worktrees"
 
 
+def _ensure_worktree_shared_dep_symlink() -> None:
+    """pyproject.toml pins the editable `artserve-shared` dependency at the
+    relative path `../ArtServe-Shared/python`, resolved from wherever
+    pyproject.toml sits. Every agent worktree lives one level deeper than
+    PROJECT_ROOT (PROJECT_ROOT/.loop-worktrees/<name>/), so that relative path
+    resolves to .loop-worktrees/ArtServe-Shared/python instead of the real
+    sibling next to PROJECT_ROOT — `uv run` (and anything that shells out to
+    it, e.g. `uv run pytest`) fails outright inside any worktree without this.
+    A one-time symlink at .loop-worktrees/ArtServe-Shared fixes the relative
+    path for every worktree created under it, regardless of name/depth."""
+    link = WORKTREE_BASE / "ArtServe-Shared"
+    if link.exists() or link.is_symlink():
+        return
+    real = PROJECT_ROOT.parent / "ArtServe-Shared"
+    if real.exists():
+        link.symlink_to(real)
+
+
 def _create_agent_worktree(slug: str, phase: str) -> Optional[Path]:
     """Create an isolated worktree at HEAD, sharing .venv/.env/data/ with the
     main tree (so the agent doesn't need to reinstall deps or lose access to
     runtime state like progress files and triage verdicts). Returns None on
     failure (caller should fall back to running against PROJECT_ROOT)."""
     WORKTREE_BASE.mkdir(exist_ok=True)
+    _ensure_worktree_shared_dep_symlink()
     tag = uuid.uuid4().hex[:8]
     wt_path = WORKTREE_BASE / f"{slug}-{phase}-{tag}"
     branch = f"loop-work/{slug}-{phase}-{tag}"
@@ -471,6 +490,31 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
 # Phase: BUILD
 # ---------------------------------------------------------------------------
 
+def _log_forbidden_file_diagnostics(slug: str, cwd: Path, forbidden: List[str]) -> None:
+    """Log what actually changed in each forbidden file, and whether that change
+    exactly matches PROJECT_ROOT's own current uncommitted diff for the same path
+    — the signature of the worktree having been branched from a stale/dirty HEAD
+    rather than the agent genuinely editing out-of-scope files. Best-effort only;
+    never let a diagnostic failure mask the real escalation."""
+    for rel in forbidden:
+        try:
+            _, wt_diff, _ = _run_cmd_capture(["git", "diff", "HEAD", "--", rel], cwd=cwd)
+            _, root_diff, _ = _run_cmd_capture(["git", "diff", "HEAD", "--", rel], cwd=PROJECT_ROOT)
+            if wt_diff.strip() and wt_diff == root_diff:
+                log.error(
+                    "[%s]   %s: worktree diff is IDENTICAL to PROJECT_ROOT's own "
+                    "uncommitted diff for this file — likely a stale/dirty HEAD, "
+                    "not an agent edit. Commit or discard PROJECT_ROOT's pending "
+                    "changes to this file, then retry.",
+                    slug, rel,
+                )
+            else:
+                snippet = "\n".join(wt_diff.splitlines()[:20])
+                log.error("[%s]   %s: worktree-only change:\n%s", slug, rel, snippet)
+        except Exception as exc:
+            log.warning("[%s]   %s: diagnostic failed: %s", slug, rel, exc)
+
+
 def _allowed_files_changed(slug: str, cwd: Path = PROJECT_ROOT) -> tuple:
     """Returns (all_allowed, changed_files, forbidden_files). all_allowed=True means
     no out-of-scope files. `cwd` should be the agent's own worktree — diffing
@@ -507,6 +551,16 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
 
     prompt = (
         f"You are implementing an ArtServe museum downloader for {slug}.\n\n"
+        f"ISOLATION: your current directory is a throwaway git worktree, not the main checkout —\n"
+        f"it is a fully independent, complete copy of the repo at its own commit. Do everything\n"
+        f"entirely within it. `uv run` (including `uv run pytest`) works normally here. Do NOT cd\n"
+        f"to, read from, or copy/sync anything from another path (e.g. a path containing\n"
+        f"'ArtAnalytics' that is not your own cwd, or anything reachable via the gitdir pointer in\n"
+        f".git) — even if you notice it looks 'ahead' of what you see here, or that some test\n"
+        f"failure looks unrelated to {slug}. This worktree is deliberately pinned to a fixed commit;\n"
+        f"a mismatch with anything you happen to discover outside it is expected and NOT something\n"
+        f"to reconcile. If a pre-existing test fails for reasons unrelated to {slug}, leave it and\n"
+        f"note it in your summary — do not attempt to fix it.\n\n"
         f"Research document (docs/{slug}.md):\n{research_text}\n\n"
         f"Task: Create a fully working downloader in src/museums/{slug}.py following the patterns "
         f"in {', '.join(existing)}.\n\n"
@@ -570,6 +624,7 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
     all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
         log.error("[%s] BUILD touched forbidden files: %s", slug, forbidden)
+        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
         if wt_path:
             log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
         escalate(ms, f"BUILD agent touched forbidden files: {forbidden}")
@@ -846,6 +901,15 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
 
     prompt = (
         f"TRIAGE task for ArtServe museum: {slug}\n\n"
+        f"ISOLATION: your current directory is a throwaway git worktree, not the main checkout —\n"
+        f"it is a fully independent, complete copy of the repo at its own commit. Do everything\n"
+        f"entirely within it. `uv run` (including `uv run pytest`) works normally here. Do NOT cd\n"
+        f"to, read from, or copy/sync anything from another path (e.g. a path containing\n"
+        f"'ArtAnalytics' that is not your own cwd, or anything reachable via the gitdir pointer in\n"
+        f".git) — even if you notice it looks 'ahead' of what you see here. This worktree is\n"
+        f"deliberately pinned to a fixed commit; a mismatch with anything outside it is expected\n"
+        f"and NOT something to reconcile. If a pre-existing test fails for reasons unrelated to\n"
+        f"{slug}, leave it — do not attempt to fix it.\n\n"
         f"Failure signal:\n"
         f"  - Exit code: {run_exit}\n"
         f"  - Processed count: {count}\n"
@@ -894,6 +958,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
         log.error("[%s] TRIAGE touched forbidden files: %s", slug, forbidden)
+        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
         if wt_path:
             log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
         escalate(ms, f"TRIAGE agent touched forbidden files: {forbidden}")
