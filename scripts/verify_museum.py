@@ -3,12 +3,19 @@
 Independent museum verifier.
 
 Builds the client exactly as main.py does, then takes a bounded live sample
-(no DB writes, no progress writes) and runs four checks:
+(no writes to production data — see check E) and runs five checks:
 
   A  Non-empty          ≥10 metadata objects yielded within the time cap
   B  Licence filter     every sampled object is_public_domain == True
   C  URL well-formed    primary_image_url parses to http(s) with a real host
   D  Images are real    magic bytes + PIL decode + dims ≥ 200×200; no uniform placeholder
+  E  DB writable        a sampled artwork round-trips through the real repository
+                         write path against a throwaway temp SQLite file (never the
+                         production DB). Catches schema/registration mismatches — e.g.
+                         a museum code missing from the `museums` table — that a pure
+                         API/image check can't see. This is exactly the class of bug
+                         that let a full LACMA crawl complete with every one of 25,135
+                         writes failing "Museum with code lacma not found".
 
 Exit codes:
   0  PASS        all checks passed
@@ -20,6 +27,7 @@ Emits a JSON result to stdout regardless of exit code.
 
 import json
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -33,6 +41,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from PIL import Image  # noqa: E402  (comes from project deps)
 
 from src.config import settings  # noqa: E402
+from src.database.database import Database  # noqa: E402
+from src.database.repository import ArtworkRepository  # noqa: E402
 from main import get_museum_config  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -84,6 +94,24 @@ def _fetch_bytes(url: str, extra_headers: Dict[str, str]) -> Optional[bytes]:
         return None
 
 
+def _check_db_writable(slug: str, artwork: Any) -> Optional[str]:
+    """Round-trip one sampled artwork through the real repository write path
+    against a throwaway temp SQLite file. Returns None on success, or an error
+    string on failure. Never touches the production database."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db = Database(Path(tmp_dir) / "verify.sqlite")
+            db.create_tables()
+            with db.session_scope() as session:
+                db.init_museums(session, museums=settings.museums)
+                ArtworkRepository(session).create_or_update_artwork(
+                    metadata=artwork, museum_code=slug
+                )
+        return None
+    except Exception as exc:
+        return f"DB write check failed: {exc}"
+
+
 def _url_ok(url: Optional[str]) -> bool:
     if not url:
         return False
@@ -110,6 +138,7 @@ def verify(slug: str) -> Dict[str, Any]:
         "B_licence_filter": None,
         "C_url_well_formed": None,
         "D_images_real": None,
+        "E_db_writable": None,
     }
     samples: List[Dict] = []
     image_results: List[Dict] = []
@@ -143,6 +172,7 @@ def verify(slug: str) -> Dict[str, Any]:
     deadline = time.monotonic() + WALL_CLOCK_CAP
     bad_licence = False
     bad_url = False
+    first_artwork = None
 
     try:
         for artwork in client.iter_collection(**museum_config["params"]):
@@ -151,6 +181,9 @@ def verify(slug: str) -> Dict[str, Any]:
                 break
             if len(samples) >= METADATA_CAP:
                 break
+
+            if first_artwork is None:
+                first_artwork = artwork
 
             if not artwork.is_public_domain:
                 bad_licence = True
@@ -166,6 +199,12 @@ def verify(slug: str) -> Dict[str, Any]:
     checks["A_non_empty"] = len(samples) >= MIN_METADATA
     checks["B_licence_filter"] = not bad_licence
     checks["C_url_well_formed"] = not bad_url and bool(samples)
+
+    if first_artwork is not None:
+        db_error = _check_db_writable(slug, first_artwork)
+        checks["E_db_writable"] = db_error is None
+        if db_error:
+            errors.append(db_error)
 
     if not checks["A_non_empty"]:
         reason = f"Only {len(samples)} metadata objects (need {MIN_METADATA})"

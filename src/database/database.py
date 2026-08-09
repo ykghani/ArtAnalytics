@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
-from typing import Optional
+from typing import Any, Dict, Optional
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -42,27 +42,31 @@ class Database:
         finally:
             session.close()
 
-    def init_museums(self, session: Session):
-        """Initialize museum entries if they don't exist"""
+    def init_museums(self, session: Session, museums: Optional[Dict[str, Any]] = None):
+        """Initialize museum entries if they don't exist.
+
+        Derived from settings.museums (src/config.py) rather than a separate
+        hardcoded list — the two used to drift (cma and then lacma both shipped
+        downloaders whose museum code was never added here, so every artwork
+        write silently failed with "Museum with code X not found" for the
+        entire run). Sourcing from the same config the downloaders themselves
+        register against means a new museum is seeded as soon as its config
+        entry exists, with no separate list to remember to update.
+
+        `museums` overrides the source registry (code -> object with a `.name`
+        attribute) — used by scripts/verify_museum.py's DB-writable check so it
+        seeds from whatever museum config the verifier itself resolved, not a
+        fresh import of the global settings singleton.
+        """
         from .models import Museum
 
-        museums = [
-            {"code": "met", "name": "Metropolitan Museum of Art"},
-            {"code": "aic", "name": "Art Institute of Chicago"},
-            {"code": "cma", "name": "Cleveland Museum of Art"},
-            {"code": "mia", "name": "Minneapolis Institute of Art"},
-            {"code": "smk", "name": "Statens Museum for Kunst"},
-            {"code": "nga", "name": "National Gallery of Art"},
-            {"code": "wellcome", "name": "Wellcome Collection"},
-            {"code": "loc", "name": "Library of Congress"},
-            {"code": "rijks", "name": "Rijksmuseum"},
-            {"code": "tepapa", "name": "Museum of New Zealand Te Papa Tongarewa"},
-            {"code": "belvedere", "name": "Belvedere, Vienna"},
-        ]
+        if museums is None:
+            from ..config import settings
+            museums = settings.museums
 
-        for museum_data in museums:
-            if not session.query(Museum).filter_by(code=museum_data["code"]).first():
-                museum = Museum(**museum_data)
-                session.add(museum)
+        for code, museum_config in museums.items():
+            if not session.query(Museum).filter_by(code=code).first():
+                name = getattr(museum_config, "name", None) or f"{code.upper()} Museum"
+                session.add(Museum(code=code, name=name))
 
         session.commit()

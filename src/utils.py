@@ -1,10 +1,14 @@
 import os
 from pathlib import Path
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from enum import Enum
+from io import BytesIO
 import json
 import re
+
+import requests
+from PIL import Image
 
 from .log_level import LogLevel
 
@@ -166,3 +170,57 @@ def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -
     logging.debug(f"Sanitized filename: {filename} (length: {byte_len(filename)} bytes)")
 
     return filename
+
+
+def fetch_remote_image_dimensions(
+    image_url: str, timeout: float = 10.0
+) -> Optional[Tuple[int, int]]:
+    """Get an image's pixel (width, height) without downloading it in full.
+
+    Streams just enough of the response for PIL to parse the format header
+    (JPEG/PNG/WEBP all declare dimensions within the first few KB, but some
+    files carry enough EXIF/metadata to push that further in) — a small
+    initial read is tried first, then a larger one, before giving up.
+
+    For museums whose API doesn't return pixel dimensions directly, this is
+    the metadata-only-safe way to populate ArtworkMetadata.image_pixel_width/
+    image_pixel_height for quality scoring — request only a rendition sized
+    for on-screen display (not an archival master), and only read its header.
+
+    Returns None if the dimensions can't be determined (network error,
+    truncated read too small to parse, etc.) — callers should treat that as
+    "no dimensions available" rather than raise.
+    """
+    for max_bytes in (131072, 524288):  # 128KB, then 512KB
+        resp = None
+        image = None
+        try:
+            resp = requests.get(image_url, stream=True, timeout=timeout)
+            resp.raise_for_status()
+
+            buffer = BytesIO()
+            for chunk in resp.iter_content(chunk_size=32768):
+                if not chunk:
+                    continue
+                buffer.write(chunk)
+                if buffer.tell() >= max_bytes:
+                    break
+            buffer.seek(0)
+
+            image = Image.open(buffer)
+            return image.size
+        except Exception:
+            continue
+        finally:
+            if image is not None:
+                try:
+                    image.close()
+                except Exception:
+                    pass
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+
+    return None

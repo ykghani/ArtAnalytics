@@ -16,6 +16,8 @@ Usage:
   python scripts/loop.py add <slug>       # enqueue a new museum
   python scripts/loop.py resume <slug> [--from PHASE]
   python scripts/loop.py skip <slug>
+  DATABASE_URL="postgresql://...@*.proxy.rlwy.net:PORT/railway" \
+    python scripts/loop.py migrate <slug>   # manual metadata -> Postgres (not automatic; see cmd_migrate)
 
 All persistent state lives in data/loop_state.json (atomic writes).
 """
@@ -31,6 +33,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -232,6 +235,113 @@ def _run_cmd_capture(cmd: List[str], cwd: Path = PROJECT_ROOT) -> tuple:
 
 
 # ---------------------------------------------------------------------------
+# Agent worktree isolation
+#
+# RESEARCH/BUILD/TRIAGE spawn `claude -p` agents that edit files. The file-
+# change audit (_allowed_files_changed) works by diffing against HEAD — but
+# if it runs against PROJECT_ROOT directly, it sees *every* uncommitted change
+# in the tree, including any made by a human working in the same checkout
+# while the loop runs in the background (this happened for real: a harvard
+# TRIAGE run was escalated to NEEDS_HUMAN for "touching" files that were
+# actually mid-edit by an unrelated interactive session). Each agent instead
+# gets a throwaway git worktree — a separate working directory + index
+# sharing the same history — so its own diff-from-HEAD is provably isolated
+# from anything happening elsewhere, no matter how concurrent.
+# ---------------------------------------------------------------------------
+
+WORKTREE_BASE = PROJECT_ROOT / ".loop-worktrees"
+
+
+def _create_agent_worktree(slug: str, phase: str) -> Optional[Path]:
+    """Create an isolated worktree at HEAD, sharing .venv/.env/data/ with the
+    main tree (so the agent doesn't need to reinstall deps or lose access to
+    runtime state like progress files and triage verdicts). Returns None on
+    failure (caller should fall back to running against PROJECT_ROOT)."""
+    WORKTREE_BASE.mkdir(exist_ok=True)
+    tag = uuid.uuid4().hex[:8]
+    wt_path = WORKTREE_BASE / f"{slug}-{phase}-{tag}"
+    branch = f"loop-work/{slug}-{phase}-{tag}"
+
+    rc, _, err = _run_cmd_capture(
+        ["git", "worktree", "add", "-b", branch, str(wt_path), "HEAD"]
+    )
+    if rc != 0:
+        log.error("[%s] Failed to create isolated worktree: %s", slug, err.strip())
+        return None
+
+    try:
+        venv_src = PROJECT_ROOT / ".venv"
+        if venv_src.exists():
+            (wt_path / ".venv").symlink_to(venv_src)
+
+        env_src = PROJECT_ROOT / ".env"
+        if env_src.exists():
+            shutil.copy(env_src, wt_path / ".env")
+
+        data_src = PROJECT_ROOT / "data"
+        if data_src.exists():
+            (wt_path / "data").symlink_to(data_src)
+    except Exception as exc:
+        log.error("[%s] Failed to prep worktree %s: %s", slug, wt_path, exc)
+        _remove_agent_worktree(wt_path)
+        return None
+
+    return wt_path
+
+
+def _remove_agent_worktree(wt_path: Path) -> None:
+    """Remove the worktree and its throwaway branch (named `loop-work/<dir-name>`
+    by _create_agent_worktree — derived rather than passed separately, since the
+    two are always created together)."""
+    rc, _, err = _run_cmd_capture(
+        ["git", "worktree", "remove", "--force", str(wt_path)]
+    )
+    if rc != 0:
+        log.warning("Failed to remove worktree %s: %s", wt_path, err.strip())
+
+    branch = f"loop-work/{wt_path.name}"
+    rc, _, err = _run_cmd_capture(["git", "branch", "-D", branch])
+    if rc != 0:
+        log.warning("Failed to delete worktree branch %s: %s", branch, err.strip())
+
+
+# Symlinked into every agent worktree by _create_agent_worktree so agents share
+# the main tree's venv/config/runtime-state — not agent-authored content, and
+# excluded here because a symlinked directory doesn't match a trailing-slash
+# .gitignore pattern (e.g. "data/"), so git would otherwise report it as an
+# untracked file and _sync_worktree_changes would try to copy it as one.
+_WORKTREE_INFRA_ENTRIES = {".venv", ".env", "data"}
+
+
+def _changed_files_in(cwd: Path) -> List[str]:
+    """Files changed (modified, added, or deleted) relative to HEAD, in `cwd`
+    — both tracked modifications and new untracked files."""
+    _, tracked_out, _ = _run_cmd_capture(["git", "diff", "--name-only", "HEAD"], cwd=cwd)
+    _, untracked_out, _ = _run_cmd_capture(
+        ["git", "ls-files", "--others", "--exclude-standard"], cwd=cwd
+    )
+    tracked = [f.strip() for f in tracked_out.splitlines() if f.strip()]
+    untracked = [f.strip() for f in untracked_out.splitlines() if f.strip()]
+    # dict.fromkeys dedupes while preserving order (a file could in principle
+    # appear in both, though tracked/untracked are normally disjoint)
+    all_changed = list(dict.fromkeys(tracked + untracked))
+    return [f for f in all_changed if f not in _WORKTREE_INFRA_ENTRIES]
+
+
+def _sync_worktree_changes(wt_path: Path, changed: List[str]) -> None:
+    """Copy each changed/new file from the worktree back into PROJECT_ROOT
+    (or remove it there if the agent deleted it in the worktree)."""
+    for rel in changed:
+        src = wt_path / rel
+        dst = PROJECT_ROOT / rel
+        if src.exists():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        elif dst.exists():
+            dst.unlink()
+
+
+# ---------------------------------------------------------------------------
 # Stall threshold
 # ---------------------------------------------------------------------------
 
@@ -261,10 +371,15 @@ def _disk_ok() -> bool:
 # ---------------------------------------------------------------------------
 
 def _research(slug: str, ms: Dict, state: Dict) -> bool:
-    """Invoke the RESEARCH agent. Returns True on success."""
+    """Invoke the RESEARCH agent, isolated in its own worktree. Returns True on success."""
     docs_dir = DOCS_DIR
     docs_dir.mkdir(parents=True, exist_ok=True)
     doc_file = docs_dir / f"{slug}.md"
+
+    wt_path = _create_agent_worktree(slug, "research")
+    run_cwd = wt_path or PROJECT_ROOT
+    if wt_path is None:
+        log.warning("[%s] Falling back to PROJECT_ROOT for RESEARCH (worktree creation failed)", slug)
 
     prompt = (
         f"You are researching the {slug} museum to build an ArtServe downloader.\n\n"
@@ -274,11 +389,38 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         f"  2. API endpoint for listing public-domain artworks (exact URL + params)\n"
         f"  3. Pagination strategy (offset/cursor/page)\n"
         f"  4. Artwork metadata fields (id, title, artist, image URL)\n"
-        f"  5. Public-domain filter (how to identify open-access works)\n"
-        f"  6. Image URL format and any size parameters\n"
+        f"  5. Rights filter — be rigorous, not just \"public domain\": identify the exact\n"
+        f"     field/enum/value that signals the work is truly CC0 / unencumbered for reuse,\n"
+        f"     not merely \"no known restrictions\" or a generic PD claim. State plainly\n"
+        f"     whether this is a verifiable per-record field or only a server-side query\n"
+        f"     filter that must be trusted without per-record confirmation (like LACMA's\n"
+        f"     publicDomain param — see docs/lacma.md \xa75) — that distinction matters and\n"
+        f"     must be called out explicitly, not glossed over.\n"
+        f"  6. Image URL format and size/rendition options — enumerate every size the API\n"
+        f"     offers (thumbnail/print/archival/etc. with approximate dimensions or file\n"
+        f"     sizes if discoverable) and recommend which rendition is appropriate for\n"
+        f"     on-screen 2D display use (a wallpaper app) — i.e. NOT a thumbnail (too small\n"
+        f"     to look good full-screen) and NOT an archival multi-hundred-MB master (wastes\n"
+        f"     bandwidth/storage for no display-quality benefit). Cite the actual size in\n"
+        f"     pixels or bytes for whichever you recommend.\n"
         f"  7. Authentication requirements (if any)\n"
         f"  8. Approximate collection size (number of public-domain works)\n"
-        f"  9. Any rate-limiting or terms of service constraints\n\n"
+        f"  9. Any rate-limiting or terms of service constraints\n"
+        f" 10. Pixel-dimension sourcing strategy — downloads are metadata-only by default\n"
+        f"     (DOWNLOAD_IMAGES=false; no image bytes are saved to disk), but quality scoring\n"
+        f"     needs image_pixel_width/image_pixel_height. Determine the CHEAPEST way to get\n"
+        f"     real dimensions without downloading the full image:\n"
+        f"       a) Does the listing/detail API response, or an IIIF manifest already being\n"
+        f"          fetched for metadata, include width/height directly? (free — no extra\n"
+        f"          request; this is how belvedere.py reads it off the IIIF canvas)\n"
+        f"       b) If not, is there a lightweight sidecar endpoint (e.g. IIIF .../info.json)\n"
+        f"          that returns dimensions in a tiny response?\n"
+        f"       c) If neither exists, identify the smallest available image rendition and\n"
+        f"          note that src/utils.py's fetch_remote_image_dimensions() can read just\n"
+        f"          its header (a partial streamed read) to get true pixel dimensions without\n"
+        f"          downloading the whole file — this is what lacma.py does against the\n"
+        f"          ~900KB 'desktop' rendition, avoiding the 244MB archival TIFF.\n"
+        f"     State which of (a)/(b)/(c) applies, with the exact field name or URL pattern.\n\n"
         f"Write only factual information you can verify from the API documentation or live requests.\n"
         f"Cite the exact endpoint URLs and field names you found.\n"
     )
@@ -295,7 +437,7 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
     log.info("[%s] Starting RESEARCH agent (attempt %d)", slug, ms["attempts"]["research"])
 
     try:
-        proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT)
+        proc = subprocess.Popen(cmd, cwd=run_cwd)
         ms["agent_pid"] = proc.pid
         _save_state(state)
         proc.wait()
@@ -304,7 +446,14 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
     except Exception as exc:
         log.error("[%s] RESEARCH agent failed to start: %s", slug, exc)
         ms["agent_pid"] = None
+        if wt_path:
+            _remove_agent_worktree(wt_path)
         return False
+
+    changed = _changed_files_in(run_cwd) if wt_path else []
+    if wt_path:
+        _sync_worktree_changes(wt_path, changed)
+        _remove_agent_worktree(wt_path)
 
     if rc != 0:
         log.error("[%s] RESEARCH agent exited with code %d", slug, rc)
@@ -322,10 +471,12 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
 # Phase: BUILD
 # ---------------------------------------------------------------------------
 
-def _allowed_files_changed(slug: str) -> tuple:
-    """Returns (all_allowed, changed_files). all_allowed=True means no out-of-scope files."""
-    rc, stdout, _ = _run_cmd_capture(["git", "diff", "--name-only", "HEAD"])
-    changed = [f.strip() for f in stdout.splitlines() if f.strip()]
+def _allowed_files_changed(slug: str, cwd: Path = PROJECT_ROOT) -> tuple:
+    """Returns (all_allowed, changed_files, forbidden_files). all_allowed=True means
+    no out-of-scope files. `cwd` should be the agent's own worktree — diffing
+    PROJECT_ROOT directly would also pick up unrelated concurrent edits sitting
+    in the main checkout (see the worktree-isolation note above)."""
+    changed = _changed_files_in(cwd)
     allowed_prefixes = (
         f"src/museums/{slug}",
         "src/museums/schemas.py",
@@ -337,12 +488,17 @@ def _allowed_files_changed(slug: str) -> tuple:
 
 
 def _build(slug: str, ms: Dict, state: Dict) -> bool:
-    """Invoke the BUILD agent. Returns True on success."""
+    """Invoke the BUILD agent, isolated in its own worktree. Returns True on success."""
     doc_file = DOCS_DIR / f"{slug}.md"
     research_text = doc_file.read_text() if doc_file.exists() else "(no research doc found)"
 
+    wt_path = _create_agent_worktree(slug, "build")
+    run_cwd = wt_path or PROJECT_ROOT
+    if wt_path is None:
+        log.warning("[%s] Falling back to PROJECT_ROOT for BUILD (worktree creation failed)", slug)
+
     # Read existing museum file list for context
-    ref_museums = ["aic", "met", "cma"]
+    ref_museums = ["aic", "met", "cma", "belvedere", "lacma"]
     existing = []
     for ref in ref_museums:
         ref_path = PROJECT_ROOT / "src" / "museums" / f"{ref}.py"
@@ -366,7 +522,20 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
         f"  - Do NOT duplicate process_image or generate_filename (they're in the base class)\n"
         f"  - Do NOT modify scripts/verify_museum.py, scripts/loop.py, or other museums' files\n"
         f"  - Do NOT write to data/ or any progress/state files\n"
-        f"  - Ensure is_public_domain is set correctly per the research document\n"
+        f"  - Ensure is_public_domain is set correctly per the research document's rights-filter\n"
+        f"    finding (item 5) — if it's a server-side-trust-only filter (no per-record field to\n"
+        f"    check), say so in a code comment rather than pretending it's independently verified\n"
+        f"  - Use the size/rendition the research document recommended for 2D display (item 6) as\n"
+        f"    primary_image_url — not the smallest thumbnail, not an archival master\n"
+        f"  - Populate ArtworkMetadata.image_pixel_width/image_pixel_height using the strategy the\n"
+        f"    research document identified (item 10): pull width/height straight off the API/manifest\n"
+        f"    response if it's already there (see belvedere.py's IIIF canvas extraction — free, no\n"
+        f"    extra request), otherwise call fetch_remote_image_dimensions() from src/utils.py against\n"
+        f"    the display-appropriate rendition (see lacma.py's factory for the pattern). Do NOT rely on\n"
+        f"    downloading the full image to measure it — DOWNLOAD_IMAGES defaults to false, so that path\n"
+        f"    won't run in production and dimensions would silently end up NULL\n"
+        f"  - If a dimension fetch is added to a factory, mock it (patch the imported name in\n"
+        f"    src.museums.schemas) in that museum's tests — do not let tests hit a live network host\n"
         f"  - Run uv run pytest tests/ -x -q to verify nothing is broken\n"
     )
 
@@ -383,7 +552,7 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
     log.info("[%s] Starting BUILD agent (attempt %d)", slug, ms["attempts"]["build"])
 
     try:
-        proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT)
+        proc = subprocess.Popen(cmd, cwd=run_cwd)
         ms["agent_pid"] = proc.pid
         _save_state(state)
         proc.wait()
@@ -392,14 +561,23 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
     except Exception as exc:
         log.error("[%s] BUILD agent failed to start: %s", slug, exc)
         ms["agent_pid"] = None
+        if wt_path:
+            _remove_agent_worktree(wt_path)
         return False
 
-    # Audit changed files
-    all_ok, changed, forbidden = _allowed_files_changed(slug)
+    # Audit changed files against the isolated worktree — never PROJECT_ROOT
+    # directly, which could be dirty from unrelated concurrent work
+    all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
         log.error("[%s] BUILD touched forbidden files: %s", slug, forbidden)
+        if wt_path:
+            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
         escalate(ms, f"BUILD agent touched forbidden files: {forbidden}")
         return False
+
+    if wt_path:
+        _sync_worktree_changes(wt_path, changed)
+        _remove_agent_worktree(wt_path)
 
     museum_file = PROJECT_ROOT / "src" / "museums" / f"{slug}.py"
     if not museum_file.exists():
@@ -642,10 +820,16 @@ def _handle_run_outcome(slug: str, ms: Dict, state: Dict, outcome: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _triage(slug: str, ms: Dict, state: Dict) -> bool:
-    """Invoke the TRIAGE agent. Returns True if agent says 'fixed' AND verifier passes."""
+    """Invoke the TRIAGE agent, isolated in its own worktree.
+    Returns True if agent says 'fixed' AND verifier passes."""
     # Read context
     doc_file = DOCS_DIR / f"{slug}.md"
     research_text = doc_file.read_text() if doc_file.exists() else "(no research doc)"
+
+    wt_path = _create_agent_worktree(slug, "triage")
+    run_cwd = wt_path or PROJECT_ROOT
+    if wt_path is None:
+        log.warning("[%s] Falling back to PROJECT_ROOT for TRIAGE (worktree creation failed)", slug)
 
     pf = _progress_file(slug)
     count = ms.get("last_processed_count", 0)
@@ -692,7 +876,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     log.info("[%s] Starting TRIAGE agent (attempt %d)", slug, ms["attempts"]["triage"])
 
     try:
-        proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT)
+        proc = subprocess.Popen(cmd, cwd=run_cwd)
         ms["agent_pid"] = proc.pid
         _save_state(state)
         proc.wait()
@@ -701,14 +885,23 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     except Exception as exc:
         log.error("[%s] TRIAGE agent failed to start: %s", slug, exc)
         ms["agent_pid"] = None
+        if wt_path:
+            _remove_agent_worktree(wt_path)
         return False
 
-    # Audit changed files
-    all_ok, changed, forbidden = _allowed_files_changed(slug)
+    # Audit changed files against the isolated worktree — never PROJECT_ROOT
+    # directly, which could be dirty from unrelated concurrent work
+    all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
         log.error("[%s] TRIAGE touched forbidden files: %s", slug, forbidden)
+        if wt_path:
+            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
         escalate(ms, f"TRIAGE agent touched forbidden files: {forbidden}")
         return False
+
+    if wt_path:
+        _sync_worktree_changes(wt_path, changed)
+        _remove_agent_worktree(wt_path)
 
     # Read verdict
     verdict_file = _triage_verdict_file(slug)
@@ -1020,6 +1213,43 @@ def cmd_skip(args) -> None:
     print(f"Marked {slug} as DONE (skipped)")
 
 
+def cmd_migrate(args) -> None:
+    """Manually migrate one museum's local SQLite metadata to Railway Postgres.
+
+    Deliberately NOT wired into the RUN->DONE autonomous transition — the
+    schema between ArtAnalytics's local model and the live Postgres table has
+    drifted before (silently, until an actual insert hit it) and this writes
+    to a production DB backing a paid app. Run by hand after a museum
+    completes, and only promote to a real loop phase once that's boring.
+    Requires DATABASE_URL (the Railway *public* proxy URL — this runs from
+    outside Railway's network, so the private railway.internal host is
+    unreachable) set in the environment.
+    """
+    slug = args.slug
+    if not os.environ.get("DATABASE_URL"):
+        print("ERROR: DATABASE_URL is not set. Export the Railway public proxy URL first, e.g.:")
+        print('  DATABASE_URL="postgresql://...@*.proxy.rlwy.net:PORT/railway" python scripts/loop.py migrate ' + slug)
+        sys.exit(1)
+
+    cmd = [
+        "uv", "run", "python", "-m", "src.database.migrate_to_postgres",
+        "--museum", slug,
+    ]
+    print(f"Migrating '{slug}' metadata to Postgres...")
+    rc = subprocess.run(cmd, cwd=PROJECT_ROOT).returncode
+
+    state = _load_state()
+    ms = state.get("museums", {}).get(slug)
+    if ms is not None:
+        _note(ms, f"Manual migrate to Postgres: {'success' if rc == 0 else f'FAILED (exit {rc})'}")
+        _save_state(state)
+
+    if rc != 0:
+        print(f"Migration failed (exit {rc}).")
+        sys.exit(rc)
+    print("Migration complete.")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1043,6 +1273,12 @@ def main() -> None:
     p_skip = sub.add_parser("skip", help="Mark a museum as done (skip it)")
     p_skip.add_argument("slug")
 
+    p_migrate = sub.add_parser(
+        "migrate",
+        help="Manually migrate one museum's metadata to Railway Postgres (requires DATABASE_URL)",
+    )
+    p_migrate.add_argument("slug")
+
     args = parser.parse_args()
 
     dispatch = {
@@ -1051,6 +1287,7 @@ def main() -> None:
         "status": cmd_status,
         "resume": cmd_resume,
         "skip": cmd_skip,
+        "migrate": cmd_migrate,
     }
 
     handler = dispatch.get(args.command)
