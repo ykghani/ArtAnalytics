@@ -32,6 +32,7 @@ ALL_MUSEUMS = [
     {"code": "belvedere", "name": "Belvedere"},
     {"code": "lacma", "name": "Los Angeles County Museum of Art (LACMA)"},
     {"code": "harvard", "name": "Harvard Art Museums"},
+    {"code": "getty", "name": "J. Paul Getty Museum"},
 ]
 
 
