@@ -121,9 +121,11 @@ def test_parse_canvas_label_falls_back_to_whole_label_without_quotes():
 
 
 def test_extract_manifest_image():
-    label, image_url = _extract_manifest_image(SAMPLE_MANIFEST)
+    label, image_url, width, height = _extract_manifest_image(SAMPLE_MANIFEST)
     assert "Messerschmidt" in label
     assert image_url == "https://sammlung.belvedere.at/apis/iiif/image/v2/122400/full/full/0/default.jpg"
+    assert width == 2835
+    assert height == 3508
 
 
 def test_extract_manifest_image_missing_sequences():
@@ -146,6 +148,8 @@ def test_factory_creates_metadata():
     assert metadata.credit_line == "Belvedere, Wien"
     assert metadata.primary_image_url.endswith("/default.jpg")
     assert metadata.image_urls["iiif"] == metadata.primary_image_url
+    assert metadata.image_pixel_width == 2835
+    assert metadata.image_pixel_height == 3508
 
 
 def test_factory_skips_rights_restricted_attribution():

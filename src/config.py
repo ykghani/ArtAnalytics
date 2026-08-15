@@ -93,6 +93,17 @@ class MuseumQuerySettings(BaseSettings):
             "cc0": None,
         }
 
+    def get_harvard_params(self) -> Dict[str, Any]:
+        """Get Harvard Art Museums query parameters.
+
+        `q=imagepermissionlevel:0` restricts to "ok to display images at any
+        size" — the practical open-access filter (see docs/harvard.md §5).
+        """
+        return {
+            "hasimage": 1,
+            "q": "imagepermissionlevel:0",
+        }
+
 
 class MuseumConfig(BaseSettings):
     """Configurations for specific museums"""
@@ -208,6 +219,31 @@ class Settings(BaseSettings):
     belvedere_user_agent: str = Field(default="Belvedere-ArtDownloadBot/1.0", env="BELVEDERE_USER_AGENT")
     # robots.txt on sammlung.belvedere.at publishes Crawl-delay: 30 — respected here.
     belvedere_rate_limit: float = Field(default=30.0, env="BELVEDERE_RATE_LIMIT")
+
+    lacma_api_base_url: str = Field(
+        default="https://collections.lacma.org/api/search",
+        env="LACMA_API_BASE_URL",
+    )
+    lacma_user_agent: str = Field(default="LACMA-ArtDownloadBot/1.0", env="LACMA_USER_AGENT")
+    # No documented rate limit — self-throttled conservatively (see docs/lacma.md §9).
+    lacma_rate_limit: float = Field(default=1.0, env="LACMA_RATE_LIMIT")
+
+    harvard_api_base_url: str = Field(
+        default="https://api.harvardartmuseums.org",
+        env="HARVARD_API_BASE_URL",
+    )
+    harvard_api_key: Optional[str] = Field(default=None, env="HARVARD_API_KEY")
+    harvard_user_agent: str = Field(default="Harvard-ArtDownloadBot/1.0", env="HARVARD_USER_AGENT")
+    # Courtesy guideline is ~2500 calls/day (86400s / 2500 ≈ 34.6s/call); see docs/harvard.md §9.
+    harvard_rate_limit: float = Field(default=35.0, env="HARVARD_RATE_LIMIT")
+
+    getty_api_base_url: str = Field(
+        default="https://data.getty.edu/museum/collection",
+        env="GETTY_API_BASE_URL",
+    )
+    getty_user_agent: str = Field(default="Getty-ArtDownloadBot/1.0", env="GETTY_USER_AGENT")
+    # No documented rate limit — self-throttled conservatively (see docs/getty.md §9).
+    getty_rate_limit: float = Field(default=1.0, env="GETTY_RATE_LIMIT")
 
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
@@ -328,6 +364,39 @@ class Settings(BaseSettings):
                 name="Belvedere",
                 # api_key intentionally omitted — no authentication required
             ),
+            "lacma": MuseumConfig(
+                api_base_url=self.lacma_api_base_url,
+                user_agent=self.lacma_user_agent,
+                rate_limit=self.lacma_rate_limit,
+                contact_email=self.default_contact_email,
+                code="lacma",
+                # Not in artserve_shared.museums (sibling package unresolved in this
+                # checkout) — passed directly since MuseumConfig allows extra kwargs.
+                name="Los Angeles County Museum of Art (LACMA)",
+                # api_key intentionally omitted — no authentication required
+            ),
+            "harvard": MuseumConfig(
+                api_base_url=self.harvard_api_base_url,
+                user_agent=self.harvard_user_agent,
+                rate_limit=self.harvard_rate_limit,
+                contact_email=self.default_contact_email,
+                code="harvard",
+                # Not in artserve_shared.museums (sibling package unresolved in this
+                # checkout) — passed directly since MuseumConfig allows extra kwargs.
+                name="Harvard Art Museums",
+                api_key=self.harvard_api_key,
+            ),
+            "getty": MuseumConfig(
+                api_base_url=self.getty_api_base_url,
+                user_agent=self.getty_user_agent,
+                rate_limit=self.getty_rate_limit,
+                contact_email=self.default_contact_email,
+                code="getty",
+                # Not in artserve_shared.museums (sibling package unresolved in this
+                # checkout) — passed directly since MuseumConfig allows extra kwargs.
+                name="J. Paul Getty Museum",
+                # api_key intentionally omitted — no authentication required
+            ),
         }
 
     # File System Configuration
@@ -380,6 +449,9 @@ class Settings(BaseSettings):
             "rijks": self.data_dir / "rijks",
             "tepapa": self.data_dir / "tepapa",
             "belvedere": self.data_dir / "belvedere",
+            "lacma": self.data_dir / "lacma",
+            "harvard": self.data_dir / "harvard",
+            "getty": self.data_dir / "getty",
         }
 
         for museum, base_dir in self.museum_dirs.items():

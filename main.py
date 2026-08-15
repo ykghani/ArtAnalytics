@@ -18,6 +18,9 @@ from src.museums.loc import LOCClient, LOCImageProcessor, LOCProgressTracker
 from src.museums.rijks import RijksClient, RijksImageProcessor, RijksProgressTracker
 from src.museums.tepapa import TePapaClient, TePapaImageProcessor, TePapaProgressTracker
 from src.museums.belvedere import BelvedereClient, BelvedereImageProcessor, BelvedereProgressTracker
+from src.museums.lacma import LACMAClient, LACMAImageProcessor, LACMAProgressTracker
+from src.museums.harvard import HARVARDClient, HARVARDImageProcessor, HARVARDProgressTracker
+from src.museums.getty import GETTYClient, GETTYImageProcessor, GETTYProgressTracker
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 from src.utils import setup_logging
 
@@ -77,6 +80,9 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         "rijks": "Rijksmuseum",
         "tepapa": "Te Papa Tongarewa",
         "belvedere": "Belvedere, Vienna",
+        "lacma": "Los Angeles County Museum of Art (LACMA)",
+        "harvard": "Harvard Art Museums",
+        "getty": "J. Paul Getty Museum",
     }
 
     return MuseumInfo(
@@ -113,6 +119,9 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         "rijks": {},
         "tepapa": {},
         "belvedere": {},
+        "lacma": {},
+        "harvard": settings.museum_queries.get_harvard_params(),
+        "getty": {},
     }.get(museum_id, {})
 
     # Handle data dump configuration
@@ -221,6 +230,24 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "processor_class": BelvedereImageProcessor,
             "tracker_class": BelvedereProgressTracker,
         },
+        "lacma": {
+            **base_config,
+            "client_class": LACMAClient,
+            "processor_class": LACMAImageProcessor,
+            "tracker_class": LACMAProgressTracker,
+        },
+        "harvard": {
+            **base_config,
+            "client_class": HARVARDClient,
+            "processor_class": HARVARDImageProcessor,
+            "tracker_class": HARVARDProgressTracker,
+        },
+        "getty": {
+            **base_config,
+            "client_class": GETTYClient,
+            "processor_class": GETTYImageProcessor,
+            "tracker_class": GETTYProgressTracker,
+        },
     }
 
     if museum_id not in configs:
@@ -317,14 +344,14 @@ def main():
     parser.add_argument(
         "museums",
         nargs="*",
-        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty"],
         help="Museum IDs to download. If not provided, downloads from all museums",
     )
     parser.add_argument(
         "--museum",
         "-m",
         dest="museum_flag",
-        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty"],
         help="Single museum to download (alternative to positional argument)",
     )
     parser.add_argument(

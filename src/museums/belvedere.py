@@ -61,8 +61,16 @@ def _is_rights_restricted(attribution: Any) -> bool:
     return text not in ("", "null")
 
 
-def _extract_manifest_image(manifest: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-    """Return (canvas_label, image_url) for the first canvas of a manifest, or None."""
+def _extract_manifest_image(
+    manifest: Dict[str, Any],
+) -> Optional[Tuple[str, str, Optional[int], Optional[int]]]:
+    """Return (canvas_label, image_url, width, height) for the first canvas, or None.
+
+    IIIF Presentation v2 canvases carry their own width/height — verified live
+    against the corresponding Image API info.json (same object, both reported
+    1772x1772), so the manifest's canvas dimensions equal the true full-resolution
+    image size here, at no extra HTTP cost.
+    """
     sequences = manifest.get("sequences") or []
     if not sequences:
         return None
@@ -77,7 +85,9 @@ def _extract_manifest_image(manifest: Dict[str, Any]) -> Optional[Tuple[str, str
     if not image_url:
         return None
     label = canvas.get("label") or manifest.get("label") or ""
-    return label, image_url
+    width = canvas.get("width")
+    height = canvas.get("height")
+    return label, image_url, width, height
 
 
 def _parse_canvas_label(label: str) -> Tuple[str, str, Optional[str]]:
@@ -118,7 +128,7 @@ class BelvedereArtworkFactory(ArtworkMetadataFactory):
         extracted = _extract_manifest_image(manifest)
         if not extracted:
             return None
-        label, image_url = extracted
+        label, image_url, width, height = extracted
 
         try:
             artist, title, date_display = _parse_canvas_label(label)
@@ -140,6 +150,8 @@ class BelvedereArtworkFactory(ArtworkMetadataFactory):
                 credit_line="Belvedere, Wien",
                 primary_image_url=image_url,
                 image_urls={"iiif": image_url},
+                image_pixel_width=width,
+                image_pixel_height=height,
             )
         except Exception as e:
             self.logger.error(f"Error creating Belvedere metadata for id={object_id}: {e}")

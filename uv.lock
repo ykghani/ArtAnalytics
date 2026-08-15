@@ -185,7 +185,7 @@ dev = [
 
 [[package]]
 name = "artserve-shared"
-version = "0.2.0"
+version = "0.1.0"
 source = { editable = "../ArtServe-Shared/python" }
 dependencies = [
     { name = "pydantic" },

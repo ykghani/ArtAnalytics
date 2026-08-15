@@ -29,6 +29,10 @@ ALL_MUSEUMS = [
     {"code": "smk", "name": "Statens Museum for Kunst"},
     {"code": "rijks", "name": "Rijksmuseum"},
     {"code": "nga", "name": "National Gallery of Art"},
+    {"code": "belvedere", "name": "Belvedere"},
+    {"code": "lacma", "name": "Los Angeles County Museum of Art (LACMA)"},
+    {"code": "harvard", "name": "Harvard Art Museums"},
+    {"code": "getty", "name": "J. Paul Getty Museum"},
 ]
 
 
@@ -44,7 +48,7 @@ def get_postgres_url() -> str:
     return url
 
 
-def migrate(force_update: bool = False):
+def migrate(force_update: bool = False, museum_code: str = None):
     if not SQLITE_PATH.exists():
         print(f"ERROR: SQLite database not found at {SQLITE_PATH}")
         sys.exit(1)
@@ -99,9 +103,22 @@ def migrate(force_update: bool = False):
         dst_museums = {m.code: m.id for m in dst_session.query(Museum).all()}
 
         # --- migrate artworks ---
-        total = src_session.query(Artwork).count()
+        artwork_query = src_session.query(Artwork)
+        src_filter_museum_id = None
+        if museum_code:
+            src_museum_row = (
+                src_session.query(Museum).filter_by(code=museum_code).first()
+            )
+            if src_museum_row is None:
+                print(f"ERROR: museum code '{museum_code}' not found in local SQLite database.")
+                sys.exit(1)
+            src_filter_museum_id = src_museum_row.id
+            artwork_query = artwork_query.filter(Artwork.museum_id == src_filter_museum_id)
+
+        total = artwork_query.count()
         mode = "upsert (force-update)" if force_update else "insert-only (skipping existing)"
-        print(f"\nMigrating {total:,} artworks in batches of {BATCH_SIZE}  [{mode}]...")
+        scope = f"museum='{museum_code}'" if museum_code else "all museums"
+        print(f"\nMigrating {total:,} artworks ({scope}) in batches of {BATCH_SIZE}  [{mode}]...")
 
         # Build a src museum_id -> dst museum_id map using code as the key
         src_museums = {m.id: m.code for m in src_session.query(Museum).all()}
@@ -163,22 +180,19 @@ def migrate(force_update: bool = False):
                 keywords=src_artwork.keywords,
                 primary_image_url=src_artwork.primary_image_url,
                 image_urls=src_artwork.image_urls,
-                image_path=src_artwork.image_path,
                 colorfulness=src_artwork.colorfulness,
                 color_h=src_artwork.color_h,
                 color_s=src_artwork.color_s,
                 color_l=src_artwork.color_l,
                 image_pixel_width=src_artwork.image_pixel_width,
                 image_pixel_height=src_artwork.image_pixel_height,
-                quality_scores=src_artwork.quality_scores,
-                quality_score=src_artwork.quality_score,
                 created_at=src_artwork.created_at,
                 updated_at=src_artwork.updated_at,
             )
 
         while True:
             batch = (
-                src_session.query(Artwork)
+                artwork_query
                 .order_by(Artwork.id)
                 .offset(offset)
                 .limit(BATCH_SIZE)
@@ -250,5 +264,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Overwrite existing records instead of skipping them (slower).",
     )
+    parser.add_argument(
+        "--museum",
+        dest="museum_code",
+        default=None,
+        help="Only migrate artworks for this museum code (e.g. 'belvedere'). Default: all museums.",
+    )
     args = parser.parse_args()
-    migrate(force_update=args.force_update)
+    migrate(force_update=args.force_update, museum_code=args.museum_code)
