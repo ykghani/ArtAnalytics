@@ -77,3 +77,10 @@ poetry.lock.env
 
 #MCPs
 .mcp.json
+
+# Claude Code local settings (per-user permission allowlist, not shared)
+.claude/settings.local.json
+.claude/*.tmp.*
+
+# loop.py runtime escalation log (grows continuously, not project state)
+NEEDS_HUMAN.md

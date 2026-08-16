@@ -192,17 +192,36 @@ def notify(title: str, body: str) -> None:
         log.warning("ntfy push failed: %s", exc)
 
 
-def escalate(ms: Dict, reason: str, extra: str = "") -> None:
+# Triage buckets for NEEDS_HUMAN escalations, so a glance at the Telegram
+# notification (via openclaw tailing NEEDS_HUMAN.md) says whether this needs
+# a laptop or can be poked from a phone, and whether it's actually blocking
+# anything or just sitting there safely.
+#   can-wait     — blocked on something outside the repo (a credential, a
+#                  manual step); nothing is running, zero cost to ignore.
+#   quick-remote — a bounded yes/no decision (review a small diff, free disk
+#                  space); a couple minutes, doable from a phone.
+#   needs-focus  — genuinely needs someone to read logs/code and reason about
+#                  root cause; do this at a computer, not urgent.
+_ESCALATION_CATEGORIES = {
+    "can-wait": ("CAN WAIT", "Blocked on something outside the codebase (credential, manual step, a decision only you can make). Nothing is running — safe to leave as long as you like."),
+    "quick-remote": ("QUICK / REMOTE", "Should be a couple-minute yes/no call — doable from your phone. No deep investigation needed."),
+    "needs-focus": ("NEEDS FOCUS", "Needs someone to actually read the logs/diff and reason about it. Not urgent, but better done at a computer."),
+}
+
+
+def escalate(ms: Dict, reason: str, extra: str = "", category: str = "needs-focus") -> None:
     slug = ms["slug"]
     phase = ms["phase"]
     notes_tail = "\n".join(ms["notes"][-10:])
+    tag, hint = _ESCALATION_CATEGORIES.get(category, _ESCALATION_CATEGORIES["needs-focus"])
     body = (
+        f"[{tag}] {hint}\n\n"
         f"Museum: {slug}\nPhase: {phase}\nReason: {reason}\n\n"
         f"{extra}\n\nRecent notes:\n{notes_tail}\n\n"
         f"To resume: python scripts/loop.py resume {slug}\n"
         f"To skip:   python scripts/loop.py skip {slug}"
     )
-    notify(f"ArtServe NEEDS_HUMAN — {slug}", body)
+    notify(f"ArtServe NEEDS_HUMAN [{tag}] — {slug}", body)
     ms["needs_human"] = True
     _transition(ms, "NEEDS_HUMAN", reason)
 
@@ -441,12 +460,32 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         f"          ~900KB 'desktop' rendition, avoiding the 244MB archival TIFF.\n"
         f"     State which of (a)/(b)/(c) applies, with the exact field name or URL pattern.\n\n"
         f"Write only factual information you can verify from the API documentation or live requests.\n"
-        f"Cite the exact endpoint URLs and field names you found.\n"
+        f"Cite the exact endpoint URLs and field names you found.\n\n"
+        f"TOOLING NOTE: WebFetch converts pages to markdown, which silently drops embedded\n"
+        f"<script> JSON. Many museum 'collection online' sites have no documented REST API at\n"
+        f"all — they're client-rendered apps (often Next.js) whose object-detail pages are\n"
+        f"still server-rendered with the full record embedded as JSON in a\n"
+        f"<script id=\"__NEXT_DATA__\" type=\"application/json\"> tag, which WebFetch cannot see\n"
+        f"but a raw fetch can. If WebSearch/WebFetch turn up no formal API docs, or WebFetch\n"
+        f"keeps returning thin/uninformative summaries of what looks like a data-heavy page,\n"
+        f"use Bash (curl) to pull the RAW html yourself and grep/parse it instead of giving up:\n"
+        f"  - Look for __NEXT_DATA__ (or similar framework hydration data) in the raw HTML of\n"
+        f"    an object detail page — it's often the whole record as JSON, no auth needed.\n"
+        f"  - If the listing page's HTML looks empty (data fetched client-side after load),\n"
+        f"    check /_next/static/<buildId>/_buildManifest.js for the real page route map —\n"
+        f"    e.g. it revealed /{{lng}}/collection/item/{{id}} for kunstmuseum-basel when the\n"
+        f"    guessed /object/{{id}} route 404'd. See docs/kunstmuseum-basel.md for a full\n"
+        f"    worked example of this pattern (SSR JSON extraction, no listing API found,\n"
+        f"    hotlink-protected images requiring a Referer header, per-record rights field).\n"
+        f"  - Image URLs are sometimes hotlink-protected (403 with no Referer) — retry with\n"
+        f"    `curl -e <a page URL on the same site>` before concluding an image is inaccessible.\n"
+        f"  - You may use Bash for read-only investigation (curl, grep, python for JSON parsing)\n"
+        f"    only. Do not use it to modify anything outside docs/{slug}.md.\n"
     )
 
     cmd = [
         "claude", "-p", prompt,
-        "--allowedTools", "WebSearch,WebFetch,Read,Write",
+        "--allowedTools", "WebSearch,WebFetch,Read,Write,Bash",
         "--permission-mode", "bypassPermissions",
         "--max-turns", "35",
         "--output-format", "text",
@@ -469,7 +508,21 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
             _remove_agent_worktree(wt_path)
         return False
 
-    changed = _changed_files_in(run_cwd) if wt_path else []
+    # Audit changed files against the isolated worktree — RESEARCH now has Bash
+    # (for raw curl investigation) so it can in principle write/edit anywhere;
+    # it's only ever supposed to touch its own doc.
+    all_ok, changed, forbidden = (
+        _allowed_files_changed(slug, cwd=run_cwd, allowed_prefixes=(f"docs/{slug}.md",))
+        if wt_path else (True, [], [])
+    )
+    if not all_ok:
+        log.error("[%s] RESEARCH touched forbidden files: %s", slug, forbidden)
+        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
+        if wt_path:
+            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
+        escalate(ms, f"RESEARCH agent touched forbidden files: {forbidden}", category="quick-remote")
+        return False
+
     if wt_path:
         _sync_worktree_changes(wt_path, changed)
         _remove_agent_worktree(wt_path)
@@ -515,18 +568,21 @@ def _log_forbidden_file_diagnostics(slug: str, cwd: Path, forbidden: List[str]) 
             log.warning("[%s]   %s: diagnostic failed: %s", slug, rel, exc)
 
 
-def _allowed_files_changed(slug: str, cwd: Path = PROJECT_ROOT) -> tuple:
+def _allowed_files_changed(slug: str, cwd: Path = PROJECT_ROOT, allowed_prefixes: Optional[tuple] = None) -> tuple:
     """Returns (all_allowed, changed_files, forbidden_files). all_allowed=True means
     no out-of-scope files. `cwd` should be the agent's own worktree — diffing
     PROJECT_ROOT directly would also pick up unrelated concurrent edits sitting
-    in the main checkout (see the worktree-isolation note above)."""
+    in the main checkout (see the worktree-isolation note above). Defaults to the
+    BUILD/TRIAGE code-scope prefixes; pass `allowed_prefixes` to override (e.g. for
+    RESEARCH, which should only ever touch its own doc)."""
     changed = _changed_files_in(cwd)
-    allowed_prefixes = (
-        f"src/museums/{slug}",
-        "src/museums/schemas.py",
-        "src/config.py",
-        "main.py",
-    )
+    if allowed_prefixes is None:
+        allowed_prefixes = (
+            f"src/museums/{slug}",
+            "src/museums/schemas.py",
+            "src/config.py",
+            "main.py",
+        )
     forbidden = [f for f in changed if not any(f.startswith(p) for p in allowed_prefixes)]
     return (len(forbidden) == 0, changed, forbidden)
 
@@ -627,7 +683,7 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
         _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
         if wt_path:
             log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
-        escalate(ms, f"BUILD agent touched forbidden files: {forbidden}")
+        escalate(ms, f"BUILD agent touched forbidden files: {forbidden}", category="quick-remote")
         return False
 
     if wt_path:
@@ -844,7 +900,7 @@ def _handle_run_outcome(slug: str, ms: Dict, state: Dict, outcome: str) -> None:
         return  # don't change phase; resume on next driver start
 
     if outcome == "DISK_FULL":
-        escalate(ms, "Disk space below minimum threshold — free space and resume", extra="")
+        escalate(ms, "Disk space below minimum threshold — free space and resume", extra="", category="quick-remote")
         return
 
     # CRASH or STALL — apply restart ladder
@@ -867,7 +923,7 @@ def _handle_run_outcome(slug: str, ms: Dict, state: Dict, outcome: str) -> None:
     elif triage_count < MAX_TRIAGE_ATTEMPTS:
         _transition(ms, "TRIAGE", f"after {outcome} ({restart_count} restarts)")
     else:
-        escalate(ms, f"Exhausted {MAX_TRIAGE_ATTEMPTS} triage attempts after {outcome}")
+        escalate(ms, f"Exhausted {MAX_TRIAGE_ATTEMPTS} triage attempts after {outcome}", category="needs-focus")
 
 
 # ---------------------------------------------------------------------------
@@ -961,7 +1017,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
         _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
         if wt_path:
             log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
-        escalate(ms, f"TRIAGE agent touched forbidden files: {forbidden}")
+        escalate(ms, f"TRIAGE agent touched forbidden files: {forbidden}", category="quick-remote")
         return False
 
     if wt_path:
@@ -983,7 +1039,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     _note(ms, f"TRIAGE verdict={verdict.get('verdict')} hypothesis={verdict.get('hypothesis','')[:100]}")
 
     if verdict.get("verdict") == "cannot_fix":
-        escalate(ms, f"Triage cannot_fix: {verdict.get('hypothesis','')}", extra=str(verdict))
+        escalate(ms, f"Triage cannot_fix: {verdict.get('hypothesis','')}", extra=str(verdict), category="can-wait")
         return False
 
     # Agent claims fixed — verify independently
@@ -1128,7 +1184,7 @@ def step(slug: str, state: Dict) -> None:
             _transition(ms, "BUILD", "research doc written")
         else:
             if ms["attempts"]["research"] >= 2:
-                escalate(ms, "RESEARCH agent failed twice")
+                escalate(ms, "RESEARCH agent failed twice", category="needs-focus")
             else:
                 _note(ms, "RESEARCH attempt failed; will retry")
 
@@ -1138,7 +1194,7 @@ def step(slug: str, state: Dict) -> None:
             _transition(ms, "VALIDATE", "museum file created")
         else:
             if ms["attempts"]["build"] >= 2:
-                escalate(ms, "BUILD agent failed twice")
+                escalate(ms, "BUILD agent failed twice", category="needs-focus")
             else:
                 _note(ms, "BUILD attempt failed; will retry")
 
@@ -1175,7 +1231,7 @@ def step(slug: str, state: Dict) -> None:
             _transition(ms, "RUN", "triage fix verified")
         else:
             if ms["attempts"]["triage"] >= MAX_TRIAGE_ATTEMPTS:
-                escalate(ms, f"Exhausted {MAX_TRIAGE_ATTEMPTS} triage attempts")
+                escalate(ms, f"Exhausted {MAX_TRIAGE_ATTEMPTS} triage attempts", category="needs-focus")
 
     elif phase in ("DONE", "NEEDS_HUMAN"):
         pass  # nothing to do

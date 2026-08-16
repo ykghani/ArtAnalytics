@@ -173,7 +173,7 @@ def sanitize_filename(id: str, title: str, artist: str, max_length: int = 255) -
 
 
 def fetch_remote_image_dimensions(
-    image_url: str, timeout: float = 10.0
+    image_url: str, timeout: float = 10.0, headers: Optional[Dict[str, str]] = None
 ) -> Optional[Tuple[int, int]]:
     """Get an image's pixel (width, height) without downloading it in full.
 
@@ -187,6 +187,9 @@ def fetch_remote_image_dimensions(
     image_pixel_height for quality scoring — request only a rendition sized
     for on-screen display (not an archival master), and only read its header.
 
+    `headers` lets callers pass request headers a host requires even for a
+    partial GET (e.g. a Referer to satisfy hotlink protection).
+
     Returns None if the dimensions can't be determined (network error,
     truncated read too small to parse, etc.) — callers should treat that as
     "no dimensions available" rather than raise.
@@ -195,7 +198,7 @@ def fetch_remote_image_dimensions(
         resp = None
         image = None
         try:
-            resp = requests.get(image_url, stream=True, timeout=timeout)
+            resp = requests.get(image_url, stream=True, timeout=timeout, headers=headers)
             resp.raise_for_status()
 
             buffer = BytesIO()
