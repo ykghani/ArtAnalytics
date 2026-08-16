@@ -245,6 +245,19 @@ class Settings(BaseSettings):
     # No documented rate limit — self-throttled conservatively (see docs/getty.md §9).
     getty_rate_limit: float = Field(default=1.0, env="GETTY_RATE_LIMIT")
 
+    kunstmuseumbasel_user_agent: str = Field(
+        default="KunstmuseumBasel-ArtDownloadBot/1.0", env="KUNSTMUSEUMBASEL_USER_AGENT"
+    )
+    # No documented rate limit or robots.txt Crawl-delay — self-throttled
+    # conservatively, similar to CMA's per-item rate (see docs/kunstmuseum-basel.md §9).
+    kunstmuseumbasel_rate_limit: float = Field(default=80.0, env="KUNSTMUSEUMBASEL_RATE_LIMIT")
+    # Upper bound for the sequential numeric-ID sweep (see docs/kunstmuseum-basel.md
+    # §3) — not a real collection total, just a fixed, raiseable cap on how far a
+    # discovery run walks. Comfortably above the highest observed real ID (85838).
+    kunstmuseumbasel_max_sweep_id: int = Field(
+        default=150000, env="KUNSTMUSEUMBASEL_MAX_SWEEP_ID"
+    )
+
     museum_queries: MuseumQuerySettings = Field(
         default_factory=MuseumQuerySettings,
         description="Museum-specific query parameters",
@@ -397,6 +410,17 @@ class Settings(BaseSettings):
                 name="J. Paul Getty Museum",
                 # api_key intentionally omitted — no authentication required
             ),
+            "kunstmuseumbasel": MuseumConfig(
+                api_base_url="https://sammlung.kunstmuseumbasel.ch",
+                user_agent=self.kunstmuseumbasel_user_agent,
+                rate_limit=self.kunstmuseumbasel_rate_limit,
+                contact_email=self.default_contact_email,
+                code="kunstmuseumbasel",
+                # Not in artserve_shared.museums (sibling package unresolved in this
+                # checkout) — passed directly since MuseumConfig allows extra kwargs.
+                name="Kunstmuseum Basel",
+                # api_key intentionally omitted — no authentication required
+            ),
         }
 
     # File System Configuration
@@ -452,6 +476,7 @@ class Settings(BaseSettings):
             "lacma": self.data_dir / "lacma",
             "harvard": self.data_dir / "harvard",
             "getty": self.data_dir / "getty",
+            "kunstmuseumbasel": self.data_dir / "kunstmuseumbasel",
         }
 
         for museum, base_dir in self.museum_dirs.items():

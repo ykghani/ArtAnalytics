@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Any, TYPE_CHECKING
+from urllib.parse import urljoin
 
 from ..config import settings
 from .museum_info import MuseumInfo
@@ -895,4 +896,139 @@ class GETTYArtworkFactory(ArtworkMetadataFactory):
             )
         except Exception as e:
             self.logger.error(f"Error creating metadata for Getty object {artwork_id}: {e}")
+            return None
+
+
+# ---------------------------------------------------------------------------
+# Kunstmuseum Basel — Next.js SSR `__NEXT_DATA__` item records
+#
+# The client (src/museums/kunstmuseumbasel.py) fetches an item page and hands
+# this factory the already-extracted `item` dict from
+# `props.pageProps.data.item` (docs/kunstmuseum-basel.md §4). Field values are
+# MuseumPlus i18n label objects (`{"LabelTxt_en": ..., "LabelTxt": ...}`),
+# hence the `_kmb_label` helper.
+# ---------------------------------------------------------------------------
+
+KUNSTMUSEUMBASEL_BASE_URL = "https://sammlung.kunstmuseumbasel.ch"
+
+
+def _kmb_label(value: Any) -> Optional[str]:
+    """Extract display text from a MuseumPlus i18n label object — falls back
+    to the German `LabelTxt` when no English translation exists (several
+    records only have `LabelTxt`, per §4) — or returns a plain string as-is."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value or None
+    if isinstance(value, dict):
+        return value.get("LabelTxt_en") or value.get("LabelTxt") or None
+    return None
+
+
+def _kmb_extract_image_paths(item: Dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
+    """Return (thumb_path, full_path) relative multimedia paths from
+    `ObjDetailMultimediaRef.Items[0].Multimedia[0]` (§4/§6), or (None, None)."""
+    ref = item.get("ObjDetailMultimediaRef") or {}
+    items_list = ref.get("Items") or []
+    if not items_list:
+        return None, None
+    multimedia_list = items_list[0].get("Multimedia") or []
+    if not multimedia_list:
+        return None, None
+    mm = multimedia_list[0] or {}
+    return mm.get("thumb"), mm.get("full")
+
+
+def _kmb_is_public_domain(rights_text: Optional[str]) -> bool:
+    """§5: `ObjDetailRightsTxt` is the per-record rights field. An empty/
+    absent field is treated as public domain; a populated one names a real
+    rights holder (e.g. a ProLitteris credit) and is treated as not public
+    domain — unless it explicitly says otherwise (e.g. "gemeinfrei" /
+    "public domain"), so a benign PD annotation isn't misread as a rights
+    claim."""
+    if not rights_text or not rights_text.strip():
+        return True
+    lowered = rights_text.strip().lower()
+    return "gemeinfrei" in lowered or "public domain" in lowered
+
+
+class KunstmuseumBaselArtworkFactory(ArtworkMetadataFactory):
+    """Factory for creating Kunstmuseum Basel artwork metadata from a single
+    item record (see module docstring above and docs/kunstmuseum-basel.md)."""
+
+    def __init__(self):
+        super().__init__("kunstmuseumbasel")
+
+    def create_metadata(self, item: Dict[str, Any]) -> Optional[ArtworkMetadata]:
+        if not item or item.get("Id") is None:
+            return None
+
+        artwork_id = str(item["Id"])
+        try:
+            title = _kmb_label(item.get("ObjDetailTitleTxt")) or "Untitled"
+
+            artist = (
+                _kmb_label(item.get("ObjListArtistTxt"))
+                or _kmb_label(item.get("ObjDetailArtistTxt"))
+                or "Unknown Artist"
+            )
+
+            date_display = None
+            sort_date = item.get("ObjSortDateFromNum")
+            if sort_date is not None:
+                date_display = str(sort_date)
+            if not date_display:
+                date_display = _kmb_label(item.get("ObjDetailDateTxt"))
+
+            accession_number = (
+                _kmb_label(item.get("ObjDetailNumberTxt")) or f"KUNSTMUSEUMBASEL-{artwork_id}"
+            )
+            dimensions = _kmb_label(item.get("ObjDetailDimensionTxt"))
+            medium = _kmb_label(item.get("ObjDetailMaterialTechniqueTxt"))
+            description = _kmb_label(item.get("ObjDetailDescriptionTxt"))
+            rights_text = _kmb_label(item.get("ObjDetailRightsTxt"))
+
+            thumb_path, full_path = _kmb_extract_image_paths(item)
+            if not full_path:
+                # No usable image — not useful for a downloader.
+                self.logger.debug(f"Kunstmuseum Basel item {artwork_id} has no usable image")
+                return None
+
+            base = f"{KUNSTMUSEUMBASEL_BASE_URL}/"
+            primary_image_url = urljoin(base, full_path)
+            image_urls = {"large": primary_image_url}
+            if thumb_path:
+                image_urls["small"] = urljoin(base, thumb_path)
+
+            # No pixel dimensions in the item JSON (§10) — read them from the
+            # `large` rendition's header. Hotlink protection (§6) requires a
+            # same-origin Referer even for this partial read.
+            image_pixel_width: Optional[int] = None
+            image_pixel_height: Optional[int] = None
+            dims = fetch_remote_image_dimensions(
+                primary_image_url, headers={"Referer": base}
+            )
+            if dims:
+                image_pixel_width, image_pixel_height = dims
+
+            return ArtworkMetadata(
+                id=artwork_id,
+                accession_number=accession_number,
+                title=title,
+                artist=artist,
+                date_display=date_display,
+                medium=medium,
+                dimensions=dimensions,
+                description=description,
+                is_public_domain=_kmb_is_public_domain(rights_text),
+                credit_line=rights_text,
+                primary_image_url=primary_image_url,
+                image_urls=image_urls,
+                image_pixel_width=image_pixel_width,
+                image_pixel_height=image_pixel_height,
+            )
+        except Exception as e:
+            self.logger.error(
+                f"Error creating metadata for Kunstmuseum Basel item {artwork_id}: {e}"
+            )
             return None

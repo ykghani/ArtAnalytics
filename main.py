@@ -21,6 +21,11 @@ from src.museums.belvedere import BelvedereClient, BelvedereImageProcessor, Belv
 from src.museums.lacma import LACMAClient, LACMAImageProcessor, LACMAProgressTracker
 from src.museums.harvard import HARVARDClient, HARVARDImageProcessor, HARVARDProgressTracker
 from src.museums.getty import GETTYClient, GETTYImageProcessor, GETTYProgressTracker
+from src.museums.kunstmuseumbasel import (
+    KunstmuseumBaselClient,
+    KunstmuseumBaselImageProcessor,
+    KunstmuseumBaselProgressTracker,
+)
 from src.museums.schemas import MuseumInfo, ArtworkMetadata
 from src.utils import setup_logging
 
@@ -83,6 +88,7 @@ def create_museum_info(museum_id: str, config: Dict[str, Any]) -> MuseumInfo:
         "lacma": "Los Angeles County Museum of Art (LACMA)",
         "harvard": "Harvard Art Museums",
         "getty": "J. Paul Getty Museum",
+        "kunstmuseumbasel": "Kunstmuseum Basel",
     }
 
     return MuseumInfo(
@@ -122,6 +128,7 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
         "lacma": {},
         "harvard": settings.museum_queries.get_harvard_params(),
         "getty": {},
+        "kunstmuseumbasel": {},
     }.get(museum_id, {})
 
     # Handle data dump configuration
@@ -248,6 +255,12 @@ def get_museum_config(museum_id: str) -> Dict[str, Any]:
             "processor_class": GETTYImageProcessor,
             "tracker_class": GETTYProgressTracker,
         },
+        "kunstmuseumbasel": {
+            **base_config,
+            "client_class": KunstmuseumBaselClient,
+            "processor_class": KunstmuseumBaselImageProcessor,
+            "tracker_class": KunstmuseumBaselProgressTracker,
+        },
     }
 
     if museum_id not in configs:
@@ -344,14 +357,14 @@ def main():
     parser.add_argument(
         "museums",
         nargs="*",
-        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty", "kunstmuseumbasel"],
         help="Museum IDs to download. If not provided, downloads from all museums",
     )
     parser.add_argument(
         "--museum",
         "-m",
         dest="museum_flag",
-        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty"],
+        choices=["aic", "met", "cma", "mia", "smk", "nga", "wellcome", "loc", "rijks", "tepapa", "belvedere", "lacma", "harvard", "getty", "kunstmuseumbasel"],
         help="Single museum to download (alternative to positional argument)",
     )
     parser.add_argument(
