@@ -10,6 +10,13 @@ State machine (per museum):
                             v
                        NEEDS_HUMAN
 
+RUN is non-blocking: the driver health-checks (or starts, up to
+MAX_CONCURRENT_RUNS) every museum in RUN each tick, then advances exactly one
+other museum through its next RESEARCH/BUILD/VALIDATE/TRIAGE step — those
+stay serial since they invoke agents and share the repo/worktree
+infrastructure, but a multi-day download no longer blocks the rest of the
+queue. See _tick_run / driver_loop.
+
 Usage:
   python scripts/loop.py run              # start/resume the driver loop
   python scripts/loop.py status           # show queue state
@@ -57,23 +64,21 @@ DISK_MIN_GB = 5.0             # pause RUN below this free space
 MAX_RESTART_ATTEMPTS = 2      # rung 1 before rung 2
 MAX_BACKOFF_ATTEMPTS = 1      # rung 2 before rung 3
 MAX_TRIAGE_ATTEMPTS = 3       # rung 3 before NEEDS_HUMAN
+MAX_VALIDATE_INCONCLUSIVE = 3 # consecutive INCONCLUSIVE verifier runs before NEEDS_HUMAN
 
 RATE_BACKOFF_MULTIPLIER = 2.0  # multiply rate_limit env var on rung 2
+
+# RUN downloads happen in the background (see _tick_run) so a multi-day crawl
+# doesn't block RESEARCH/BUILD/VALIDATE/TRIAGE for the rest of the queue. Cap
+# concurrency to bound this Pi's bandwidth/disk contention.
+MAX_CONCURRENT_RUNS = 2
 
 # files written by subprocesses (relative to museum data dir)
 _RUN_EXIT_FILE = "run_exit.json"
 _TRIAGE_VERDICT_FILE = "triage_verdict.json"
 _PROGRESS_FILE = "cache/processed_ids.json"
 _RUN_SUMMARY_FILE = "run_summary.json"
-
-# Museum rate-limit defaults (seconds per item) — used to compute stall threshold
-_MUSEUM_RATE_SECONDS: Dict[str, float] = {
-    "aic": 1.0, "met": 2.0, "cma": 80.0, "mia": 5.0, "smk": 1.0,
-    "nga": 1.0, "wellcome": 2.0, "loc": 1.0, "rijks": 1.0, "tepapa": 5.0,
-}
-
-# Files agents are allowed to touch (relative to project root); checked post-agent.
-_BUILD_ALLOW = {"src/museums", "src/config.py", "src/museums/schemas.py", "main.py"}
+_RESEARCH_SUMMARY_FILE = "research_summary.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,7 +108,10 @@ def _default_museum_state(slug: str) -> Dict[str, Any]:
     return {
         "slug": slug,
         "phase": "RESEARCH",
-        "attempts": {"research": 0, "build": 0, "validate": 0, "triage": 0, "restart": 0},
+        "attempts": {
+            "research": 0, "build": 0, "validate": 0, "validate_inconclusive": 0,
+            "triage": 0, "restart": 0,
+        },
         "last_processed_count": 0,
         "last_progress_mtime": None,
         "run_pid": None,
@@ -113,6 +121,16 @@ def _default_museum_state(slug: str) -> Dict[str, Any]:
         "baseline_total": None,
         "needs_human": False,
         "notes": [],
+        # Non-blocking backoff: when set (epoch seconds), _pick_active skips
+        # this museum until then instead of the driver sleeping in-place.
+        # Cleared on every phase transition (see _transition).
+        "next_eligible_at": None,
+        # Tail of the most recently failed agent's captured output, injected
+        # into that same phase's next retry prompt (see _prior_failure_note).
+        "last_failure": None,
+        # Verifier's own stdout/stderr from the last _validate() run, folded
+        # into TRIAGE's prompt so it doesn't have to re-derive the failure.
+        "last_verify_output": None,
     }
 
 
@@ -152,14 +170,32 @@ def _run_summary_file(slug: str) -> Path:
     return _museum_data_dir(slug) / _RUN_SUMMARY_FILE
 
 
+def _research_summary_file(slug: str) -> Path:
+    return _museum_data_dir(slug) / _RESEARCH_SUMMARY_FILE
+
+
 def _note(ms: Dict, msg: str) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     ms["notes"].append(f"{ts} {msg}")
 
 
+def _parse_iso_epoch(iso_str: Optional[str]) -> Optional[float]:
+    """Parse an ISO-8601 timestamp (as stored in ms["started_at"]) to epoch
+    seconds, or None if unset/unparseable. Used for wall-clock elapsed-time
+    checks (startup grace, etc.) that must survive driver restarts — unlike
+    time.monotonic(), which resets on every process start."""
+    if not iso_str:
+        return None
+    try:
+        return datetime.fromisoformat(iso_str.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return None
+
+
 def _transition(ms: Dict, new_phase: str, reason: str = "") -> None:
     log.info("[%s] %s → %s  %s", ms["slug"], ms["phase"], new_phase, reason)
     ms["phase"] = new_phase
+    ms["next_eligible_at"] = None  # any phase-scoped backoff (e.g. VALIDATE INCONCLUSIVE) is now stale
     _note(ms, f"→{new_phase}: {reason}")
 
 
@@ -251,6 +287,52 @@ def _run_cmd_capture(cmd: List[str], cwd: Path = PROJECT_ROOT) -> tuple:
     """Run a command and return (exit_code, stdout, stderr)."""
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Agent output capture and retry feedback
+#
+# `claude -p` agents used to run with stdout/stderr inherited (nothing kept),
+# so a failed attempt gave the retry nothing but a byte-identical prompt — the
+# second attempt would frequently repeat the exact same dead end. Each agent
+# invocation is now teed to a per-attempt log file, and a failed attempt's
+# tail is folded into the next retry's prompt.
+# ---------------------------------------------------------------------------
+
+_FAILURE_TAIL_CHARS = 2000
+
+
+def _agent_log_file(slug: str, phase: str, attempt: int) -> Path:
+    log_dir = _museum_data_dir(slug) / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    return log_dir / f"{phase.lower()}-{attempt}.log"
+
+
+def _record_agent_failure(ms: Dict, phase: str, attempt: int, log_file: Path) -> None:
+    """Save the tail of a failed agent's captured output so the next retry's
+    prompt can reference it instead of repeating the same dead end."""
+    try:
+        text = log_file.read_text(errors="replace")
+    except Exception:
+        text = ""
+    ms["last_failure"] = {"phase": phase, "attempt": attempt, "tail": text[-_FAILURE_TAIL_CHARS:]}
+
+
+def _prior_failure_note(ms: Dict, phase: str) -> str:
+    """Prompt snippet describing the previous failed attempt at this same
+    phase, or "" if there isn't one (first attempt, log file empty, or the
+    last recorded failure was a different phase)."""
+    lf = ms.get("last_failure")
+    if not lf or lf.get("phase") != phase:
+        return ""
+    tail = lf.get("tail", "").strip()
+    if not tail:
+        return ""
+    return (
+        f"\nA previous {phase} attempt (#{lf.get('attempt')}) failed. Its final output was:\n"
+        f"---\n{tail}\n---\n"
+        f"Avoid repeating whatever approach led to that failure.\n\n"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -380,12 +462,47 @@ def _sync_worktree_changes(wt_path: Path, changed: List[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stall threshold
+# Stall threshold & rate-limit backoff
 # ---------------------------------------------------------------------------
+
+def _museum_base_rate(slug: str) -> float:
+    """Per-item rate-limit seconds for `slug`, read from this museum's own
+    Settings field (e.g. settings.cma_rate_limit) instead of a hand-maintained
+    table — a prior version of this table was a static dict that silently
+    went stale as museums were added (tepapa alone was off by 25x: hardcoded
+    at 5.0s/item vs. the real 0.2s/item default) and never covered
+    belvedere/lacma/harvard/getty/kunstmuseumbasel at all, which meant their
+    stall thresholds were always computed off the wrong number."""
+    try:
+        from src.config import settings
+        settings.initialize_paths(PROJECT_ROOT)
+        return float(getattr(settings, f"{slug}_rate_limit"))
+    except Exception:
+        return 2.0  # unknown museum or missing field — conservative fallback
+
+
+def _museum_rate_limit_env_var(slug: str) -> str:
+    """Env var name this museum's client actually reads for its rate limit.
+
+    NOT necessarily what config.py's `Field(..., env="...")` claims: pydantic
+    v2 (pydantic-settings 2.x) silently ignores that kwarg — it's a pydantic
+    v1 relic (see the PydanticDeprecatedSince20 warning on every Settings
+    field that still sets it) — and resolves the env var from
+    SCREAMING_SNAKE_CASE of the field name instead. Verified empirically:
+    CMA's field is `cma_rate_limit`, and only `CMA_RATE_LIMIT` has any effect
+    on it — `CLEVELAND_RATE_LIMIT`, what its `env=` kwarg names, does nothing.
+    This is also why the old flat `RATE_LIMIT_DELAY` env var this function
+    replaces never worked for rung-2 backoff: no museum client reads it or
+    `settings.rate_limit_delay` for its per-item pacing — each museum reads
+    its own `{slug}_rate_limit` field, and that field's real env var is
+    always `{SLUG}_RATE_LIMIT`, matched here regardless of what a museum's
+    own `env=` kwarg happens to claim."""
+    return f"{slug.upper()}_RATE_LIMIT"
+
 
 def _stall_threshold(slug: str, ms: Dict) -> int:
     """Compute adaptive stall threshold in seconds."""
-    rate = ms.get("rate_override") or _MUSEUM_RATE_SECONDS.get(slug, 2.0)
+    rate = ms.get("rate_override") or _museum_base_rate(slug)
     batch = 100  # save_batch_size from progress_tracker
     expected = rate * batch
     return max(MIN_STALL_SECONDS, int(4 * expected))
@@ -419,7 +536,10 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
     if wt_path is None:
         log.warning("[%s] Falling back to PROJECT_ROOT for RESEARCH (worktree creation failed)", slug)
 
+    prior_failure_note = _prior_failure_note(ms, "RESEARCH")
+
     prompt = (
+        f"{prior_failure_note}"
         f"You are researching the {slug} museum to build an ArtServe downloader.\n\n"
         f"Task: Investigate the museum's public API or data source for open-access artwork.\n"
         f"Output: Write a research document to docs/{slug}.md containing:\n"
@@ -441,7 +561,9 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         f"     to look good full-screen) and NOT an archival multi-hundred-MB master (wastes\n"
         f"     bandwidth/storage for no display-quality benefit). Cite the actual size in\n"
         f"     pixels or bytes for whichever you recommend.\n"
-        f"  7. Authentication requirements (if any)\n"
+        f"  7. Authentication requirements (if any) — be exact: does the API require a key/token\n"
+        f"     at all, and if so, is it self-service (an instant API key from a developer portal)\n"
+        f"     or does it require a human to fill out a registration form / request access by email?\n"
         f"  8. Approximate collection size (number of public-domain works)\n"
         f"  9. Any rate-limiting or terms of service constraints\n"
         f" 10. Pixel-dimension sourcing strategy — downloads are metadata-only by default\n"
@@ -461,6 +583,16 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         f"     State which of (a)/(b)/(c) applies, with the exact field name or URL pattern.\n\n"
         f"Write only factual information you can verify from the API documentation or live requests.\n"
         f"Cite the exact endpoint URLs and field names you found.\n\n"
+        f"ALSO write data/{slug}/research_summary.json (a plain directory reachable from your cwd,\n"
+        f"not a scope violation — it isn't docs/{slug}.md, but it's the designated machine-readable\n"
+        f"companion to it) with exactly these fields, reflecting your answer to item 7 above:\n"
+        f'  {{"auth_required": true|false,\n'
+        f'   "auth_notes": "one or two sentences — what kind of credential, and how a human gets one",\n'
+        f'   "signup_url": "the exact URL to request/register for a key, or null if auth_required is false",\n'
+        f'   "suggested_env_var": "SCREAMING_SNAKE_CASE env var name matching this project\'s convention\n'
+        f'                         (e.g. HARVARD_API_KEY), or null if auth_required is false"}}\n'
+        f"This lets the driver check for a working credential before wasting a BUILD/TRIAGE cycle on\n"
+        f"a museum that's blocked on a human registering for API access — get it right.\n\n"
         f"TOOLING NOTE: WebFetch converts pages to markdown, which silently drops embedded\n"
         f"<script> JSON. Many museum 'collection online' sites have no documented REST API at\n"
         f"all — they're client-rendered apps (often Next.js) whose object-detail pages are\n"
@@ -492,13 +624,16 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
     ]
 
     ms["attempts"]["research"] += 1
-    log.info("[%s] Starting RESEARCH agent (attempt %d)", slug, ms["attempts"]["research"])
+    attempt = ms["attempts"]["research"]
+    log.info("[%s] Starting RESEARCH agent (attempt %d)", slug, attempt)
+    log_file = _agent_log_file(slug, "research", attempt)
 
     try:
-        proc = subprocess.Popen(cmd, cwd=run_cwd)
-        ms["agent_pid"] = proc.pid
-        _save_state(state)
-        proc.wait()
+        with log_file.open("w") as fh:
+            proc = subprocess.Popen(cmd, cwd=run_cwd, stdout=fh, stderr=subprocess.STDOUT)
+            ms["agent_pid"] = proc.pid
+            _save_state(state)
+            proc.wait()
         ms["agent_pid"] = None
         rc = proc.returncode
     except Exception as exc:
@@ -506,6 +641,7 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         ms["agent_pid"] = None
         if wt_path:
             _remove_agent_worktree(wt_path)
+        _record_agent_failure(ms, "RESEARCH", attempt, log_file)
         return False
 
     # Audit changed files against the isolated worktree — RESEARCH now has Bash
@@ -516,12 +652,10 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
         if wt_path else (True, [], [])
     )
     if not all_ok:
-        log.error("[%s] RESEARCH touched forbidden files: %s", slug, forbidden)
-        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
-        if wt_path:
-            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
-        escalate(ms, f"RESEARCH agent touched forbidden files: {forbidden}", category="quick-remote")
-        return False
+        changed, ok = _handle_forbidden_files(slug, ms, "RESEARCH", run_cwd, wt_path, changed, forbidden)
+        if not ok:
+            _record_agent_failure(ms, "RESEARCH", attempt, log_file)
+            return False
 
     if wt_path:
         _sync_worktree_changes(wt_path, changed)
@@ -529,43 +663,130 @@ def _research(slug: str, ms: Dict, state: Dict) -> bool:
 
     if rc != 0:
         log.error("[%s] RESEARCH agent exited with code %d", slug, rc)
+        _record_agent_failure(ms, "RESEARCH", attempt, log_file)
         return False
 
     if not doc_file.exists():
         log.error("[%s] RESEARCH completed but docs/%s.md not written", slug, slug)
+        _record_agent_failure(ms, "RESEARCH", attempt, log_file)
         return False
 
     log.info("[%s] RESEARCH done — docs/%s.md written", slug, slug)
     return True
 
 
+def _check_credential_gate(slug: str, ms: Dict) -> bool:
+    """After a successful RESEARCH, check research_summary.json for a
+    required credential that isn't in the environment yet — and if so,
+    escalate immediately (can-wait) instead of letting BUILD and then TRIAGE
+    each burn a cycle rediscovering the same "needs a human to register for
+    an API key" conclusion RESEARCH already reached (this is exactly what
+    happened with harvard — see NEEDS_HUMAN.md history).
+
+    Returns True if it's safe to proceed to BUILD; False if it escalated
+    (caller should not transition)."""
+    summary_file = _research_summary_file(slug)
+    if not summary_file.exists():
+        log.warning("[%s] RESEARCH did not write research_summary.json — skipping credential gate", slug)
+        return True
+
+    try:
+        summary = json.loads(summary_file.read_text())
+    except Exception as exc:
+        log.warning("[%s] Could not parse research_summary.json: %s — skipping credential gate", slug, exc)
+        return True
+
+    if not summary.get("auth_required"):
+        return True
+
+    env_var = summary.get("suggested_env_var")
+    if env_var and os.environ.get(env_var):
+        log.info("[%s] Credential gate: %s is set — proceeding to BUILD", slug, env_var)
+        return True
+
+    auth_notes = summary.get("auth_notes", "")
+    signup_url = summary.get("signup_url") or "(not provided — see research doc)"
+    env_hint = f" and set {env_var} in .env" if env_var else ""
+    escalate(
+        ms,
+        f"{slug} requires a credential that isn't set" + (f" ({env_var})" if env_var else ""),
+        extra=(
+            f"{auth_notes}\n\n"
+            f"Sign up at: {signup_url}\n"
+            f"Then register for the key{env_hint}, then run:\n"
+            f"  python scripts/loop.py resume {slug}"
+        ),
+        category="can-wait",
+    )
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Phase: BUILD
 # ---------------------------------------------------------------------------
 
-def _log_forbidden_file_diagnostics(slug: str, cwd: Path, forbidden: List[str]) -> None:
-    """Log what actually changed in each forbidden file, and whether that change
-    exactly matches PROJECT_ROOT's own current uncommitted diff for the same path
-    — the signature of the worktree having been branched from a stale/dirty HEAD
-    rather than the agent genuinely editing out-of-scope files. Best-effort only;
-    never let a diagnostic failure mask the real escalation."""
+def _classify_forbidden_files(slug: str, cwd: Path, forbidden: List[str]) -> tuple:
+    """Split `forbidden` into (infra, genuine) — each a list of (rel_path, wt_diff)
+    tuples. A file lands in `infra` when its worktree diff-from-HEAD is byte-identical
+    to PROJECT_ROOT's own current uncommitted diff for the same path: the signature of
+    the worktree having been branched from a stale/dirty HEAD (see the worktree-isolation
+    note above) rather than the agent genuinely editing an out-of-scope file. Best-effort:
+    a diagnostic failure classifies the file as genuine — never let it silently swallow
+    a real escalation."""
+    infra: List[tuple] = []
+    genuine: List[tuple] = []
     for rel in forbidden:
         try:
             _, wt_diff, _ = _run_cmd_capture(["git", "diff", "HEAD", "--", rel], cwd=cwd)
             _, root_diff, _ = _run_cmd_capture(["git", "diff", "HEAD", "--", rel], cwd=PROJECT_ROOT)
             if wt_diff.strip() and wt_diff == root_diff:
-                log.error(
-                    "[%s]   %s: worktree diff is IDENTICAL to PROJECT_ROOT's own "
-                    "uncommitted diff for this file — likely a stale/dirty HEAD, "
-                    "not an agent edit. Commit or discard PROJECT_ROOT's pending "
-                    "changes to this file, then retry.",
-                    slug, rel,
-                )
+                infra.append((rel, wt_diff))
             else:
-                snippet = "\n".join(wt_diff.splitlines()[:20])
-                log.error("[%s]   %s: worktree-only change:\n%s", slug, rel, snippet)
+                genuine.append((rel, wt_diff))
         except Exception as exc:
             log.warning("[%s]   %s: diagnostic failed: %s", slug, rel, exc)
+            genuine.append((rel, ""))
+    return infra, genuine
+
+
+def _handle_forbidden_files(
+    slug: str, ms: Dict, phase: str, run_cwd: Path, wt_path: Optional[Path],
+    changed: List[str], forbidden: List[str],
+) -> tuple:
+    """Given a failed _allowed_files_changed() audit, filter out infra false
+    positives (see _classify_forbidden_files) and escalate only if a genuine
+    out-of-scope edit remains.
+
+    Returns (changed, ok). ok=True means the caller should proceed as if the
+    audit had passed — the infra files are dropped from `changed` so they are
+    never synced back to PROJECT_ROOT (copying them would be a no-op anyway,
+    since their diff already matches, but dropping is the correct intent).
+    ok=False means a genuine violation was found and escalate() was already
+    called; the caller should return failure without syncing."""
+    infra, genuine = _classify_forbidden_files(slug, run_cwd, forbidden)
+
+    if infra:
+        infra_paths = [rel for rel, _ in infra]
+        log.warning(
+            "[%s] %s: %d forbidden file(s) match PROJECT_ROOT's own uncommitted "
+            "diff exactly — treating as stale/dirty-HEAD false positives, not "
+            "agent edits, and not escalating: %s",
+            slug, phase, len(infra_paths), infra_paths,
+        )
+        changed = [f for f in changed if f not in infra_paths]
+
+    if not genuine:
+        return changed, True
+
+    genuine_paths = [rel for rel, _ in genuine]
+    log.error("[%s] %s touched forbidden files: %s", slug, phase, genuine_paths)
+    for rel, wt_diff in genuine:
+        snippet = "\n".join(wt_diff.splitlines()[:20])
+        log.error("[%s]   %s: worktree-only change:\n%s", slug, rel, snippet)
+    if wt_path:
+        log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
+    escalate(ms, f"{phase} agent touched forbidden files: {genuine_paths}", category="quick-remote")
+    return changed, False
 
 
 def _allowed_files_changed(slug: str, cwd: Path = PROJECT_ROOT, allowed_prefixes: Optional[tuple] = None) -> tuple:
@@ -605,7 +826,10 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
         if ref_path.exists():
             existing.append(f"src/museums/{ref}.py")
 
+    prior_failure_note = _prior_failure_note(ms, "BUILD")
+
     prompt = (
+        f"{prior_failure_note}"
         f"You are implementing an ArtServe museum downloader for {slug}.\n\n"
         f"ISOLATION: your current directory is a throwaway git worktree, not the main checkout —\n"
         f"it is a fully independent, complete copy of the repo at its own commit. Do everything\n"
@@ -659,13 +883,16 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
     ]
 
     ms["attempts"]["build"] += 1
-    log.info("[%s] Starting BUILD agent (attempt %d)", slug, ms["attempts"]["build"])
+    attempt = ms["attempts"]["build"]
+    log.info("[%s] Starting BUILD agent (attempt %d)", slug, attempt)
+    log_file = _agent_log_file(slug, "build", attempt)
 
     try:
-        proc = subprocess.Popen(cmd, cwd=run_cwd)
-        ms["agent_pid"] = proc.pid
-        _save_state(state)
-        proc.wait()
+        with log_file.open("w") as fh:
+            proc = subprocess.Popen(cmd, cwd=run_cwd, stdout=fh, stderr=subprocess.STDOUT)
+            ms["agent_pid"] = proc.pid
+            _save_state(state)
+            proc.wait()
         ms["agent_pid"] = None
         rc = proc.returncode
     except Exception as exc:
@@ -673,18 +900,17 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
         ms["agent_pid"] = None
         if wt_path:
             _remove_agent_worktree(wt_path)
+        _record_agent_failure(ms, "BUILD", attempt, log_file)
         return False
 
     # Audit changed files against the isolated worktree — never PROJECT_ROOT
     # directly, which could be dirty from unrelated concurrent work
     all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
-        log.error("[%s] BUILD touched forbidden files: %s", slug, forbidden)
-        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
-        if wt_path:
-            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
-        escalate(ms, f"BUILD agent touched forbidden files: {forbidden}", category="quick-remote")
-        return False
+        changed, ok = _handle_forbidden_files(slug, ms, "BUILD", run_cwd, wt_path, changed, forbidden)
+        if not ok:
+            _record_agent_failure(ms, "BUILD", attempt, log_file)
+            return False
 
     if wt_path:
         _sync_worktree_changes(wt_path, changed)
@@ -693,10 +919,12 @@ def _build(slug: str, ms: Dict, state: Dict) -> bool:
     museum_file = PROJECT_ROOT / "src" / "museums" / f"{slug}.py"
     if not museum_file.exists():
         log.error("[%s] BUILD did not create src/museums/%s.py", slug, slug)
+        _record_agent_failure(ms, "BUILD", attempt, log_file)
         return False
 
     if rc != 0:
         log.error("[%s] BUILD agent exited with code %d", slug, rc)
+        _record_agent_failure(ms, "BUILD", attempt, log_file)
         return False
 
     log.info("[%s] BUILD done — changed: %s", slug, changed)
@@ -720,6 +948,14 @@ def _validate(slug: str, ms: Dict) -> str:
     log.info("[%s] Verifier exit code %d", slug, rc)
     if stdout:
         log.info("[%s] Verifier output: %s", slug, stdout[:500])
+
+    # Kept for TRIAGE's prompt (see _triage) — the verifier's own diagnosis of
+    # why VALIDATE failed is more informative than the bare exit code.
+    ms["last_verify_output"] = {
+        "exit_code": rc,
+        "stdout": stdout[-2000:] if stdout else "",
+        "stderr": stderr[-1000:] if stderr else "",
+    }
 
     try:
         result = json.loads(stdout)
@@ -799,18 +1035,55 @@ def _build_run_cmd(slug: str, ms: Dict) -> List[str]:
     return cmd
 
 
-def _run_download(slug: str, ms: Dict, state: Dict) -> str:
-    """
-    Start and poll a download subprocess.
+# Popen objects for downloads started by *this* driver process, keyed by
+# slug. Nothing but loop.py itself writes run_exit.json — main.py doesn't —
+# so the only reliable way to learn a download's exit code is to hold its
+# Popen and poll() it ourselves. A pid reattached from a prior driver
+# incarnation (after a restart) never had a Popen object in this process to
+# begin with; that case falls back to _read_run_exit, which will be empty
+# unless this same process happened to observe and record the exit before
+# restarting — a pre-existing limitation, not something this refactor
+# introduces or attempts to fix.
+_ACTIVE_DOWNLOADS: Dict[str, subprocess.Popen] = {}
 
-    Returns: 'DONE' | 'CRASH' | 'STALL' | 'DISK_FULL'
-    """
+
+def _terminate_download(slug: str, pid: int, proc: Optional[subprocess.Popen]) -> None:
+    """Send SIGTERM and reap the child. Uses the held Popen object when this
+    driver process started it (bounded wait, mirrors subprocess.Popen.wait
+    semantics); falls back to a bare os.kill for a pid reattached from a
+    prior driver incarnation, which has no Popen handle to wait on."""
+    if proc is not None:
+        try:
+            proc.terminate()
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+        _ACTIVE_DOWNLOADS.pop(slug, None)
+        return
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
+def _count_active_runs(state: Dict) -> int:
+    """Number of museums currently mid-download (run_pid set) — used to
+    enforce MAX_CONCURRENT_RUNS. Scans `state` directly so it reflects any
+    downloads already started earlier in the same driver tick."""
+    return sum(1 for ms in state.get("museums", {}).values() if ms.get("run_pid"))
+
+
+def _start_download(slug: str, ms: Dict, state: Dict) -> None:
+    """Launch a new download subprocess in the background and return
+    immediately — does not poll or block. Health-checking happens on later
+    driver ticks via _run_health_check."""
     if not _disk_ok():
-        return "DISK_FULL"
+        _handle_run_outcome(slug, ms, state, "DISK_FULL")
+        return
 
     env = os.environ.copy()
     if ms.get("rate_override"):
-        env["RATE_LIMIT_DELAY"] = str(ms["rate_override"])
+        env[_museum_rate_limit_env_var(slug)] = str(ms["rate_override"])
 
     cmd = _build_run_cmd(slug, ms)
     # Remove old run exit file so we don't read a stale one
@@ -818,86 +1091,122 @@ def _run_download(slug: str, ms: Dict, state: Dict) -> str:
 
     log.info("[%s] Starting download: %s", slug, " ".join(cmd))
     proc = subprocess.Popen(cmd, cwd=PROJECT_ROOT, env=env)
+    _ACTIVE_DOWNLOADS[slug] = proc
     ms["run_pid"] = proc.pid
     ms["started_at"] = datetime.now(timezone.utc).isoformat()
     ms["last_processed_count"] = _read_processed_count(slug)
     ms["last_progress_mtime"] = time.time()
     ms["attempts"]["restart"] += 1
-    _save_state(state)
 
     stall_threshold = _stall_threshold(slug, ms)
-    poll_interval = min(stall_threshold // 4, POLL_BASE_SECONDS * 5)
-    startup_deadline = time.monotonic() + STARTUP_GRACE_SECONDS
-
     log.info(
-        "[%s] Poll interval=%ds, stall threshold=%ds, startup grace=%ds",
-        slug, poll_interval, stall_threshold, STARTUP_GRACE_SECONDS,
+        "[%s] Running in background (driver tick=%ds), stall threshold=%ds, startup grace=%ds",
+        slug, POLL_BASE_SECONDS, stall_threshold, STARTUP_GRACE_SECONDS,
     )
 
-    while not _shutdown:
-        time.sleep(poll_interval)
 
-        # Check if process is still alive
-        rc = proc.poll()
-        if rc is not None:
-            _write_run_exit(slug, rc)
-            ms["run_pid"] = None
-            _save_state(state)
+def _run_health_check(slug: str, ms: Dict, state: Dict) -> None:
+    """Non-blocking health check for a museum in RUN with an active run_pid:
+    resolve and apply the outcome via _handle_run_outcome if the download
+    concluded (or must be terminated) this tick, otherwise leave it running.
 
-            if rc == 0:
-                summary = _read_run_summary(slug)
-                if summary and summary.get("reached_end_of_collection") and summary.get("total_processed", 0) > 0:
-                    return "DONE"
-                log.warning("[%s] Exit 0 but run_summary missing end-of-collection flag", slug)
-                return "CRASH"
-            log.error("[%s] Download exited with code %d", slug, rc)
-            return "CRASH"
+    Replaces the old _check_prior_run/_poll_existing_pid split — there is no
+    longer a distinction between "a Popen object we're holding" and "a bare
+    pid from a previous driver incarnation": every RUN museum is tracked the
+    same way (pid + state file), whether the download started this driver
+    process or an earlier one.
+    """
+    pid = ms["run_pid"]
 
-        # Disk check
-        if not _disk_ok():
-            proc.terminate()
-            proc.wait()
-            ms["run_pid"] = None
-            _save_state(state)
-            return "DISK_FULL"
+    # If this driver process started the download, we hold its Popen object —
+    # use it to capture the exit code reliably and persist it (see the
+    # _ACTIVE_DOWNLOADS docstring). Reattaching to a pid from a prior driver
+    # incarnation has no such handle.
+    proc = _ACTIVE_DOWNLOADS.get(slug)
+    if proc is not None and proc.poll() is not None:
+        _write_run_exit(slug, proc.returncode)
+        del _ACTIVE_DOWNLOADS[slug]
 
-        # Stall detection (skip during startup grace)
-        if time.monotonic() > startup_deadline:
-            count_now = _read_processed_count(slug)
-            mtime_now = _progress_file(slug).stat().st_mtime if _progress_file(slug).exists() else ms["last_progress_mtime"]
+    if not _pid_alive(pid):
+        exit_code = _read_run_exit(slug)
+        ms["run_pid"] = None
+        if exit_code is None:
+            log.warning("[%s] Child pid=%d gone with no exit marker — treating as CRASH", slug, pid)
+            _handle_run_outcome(slug, ms, state, "CRASH")
+            return
+        if exit_code == 0:
+            summary = _read_run_summary(slug)
+            if summary and summary.get("reached_end_of_collection") and summary.get("total_processed", 0) > 0:
+                _handle_run_outcome(slug, ms, state, "DONE")
+                return
+            log.warning("[%s] Exit 0 but run_summary missing end-of-collection flag", slug)
+            _handle_run_outcome(slug, ms, state, "CRASH")
+            return
+        log.error("[%s] Child exited with code %d", slug, exit_code)
+        _handle_run_outcome(slug, ms, state, "CRASH")
+        return
 
-            progress_advanced = (count_now > ms["last_processed_count"])
-            time_since_progress = time.time() - (mtime_now or time.time())
+    if not _disk_ok():
+        _terminate_download(slug, pid, proc)
+        ms["run_pid"] = None
+        _handle_run_outcome(slug, ms, state, "DISK_FULL")
+        return
 
-            if count_now > ms["last_processed_count"]:
-                ms["last_processed_count"] = count_now
-                ms["last_progress_mtime"] = mtime_now
-                _save_state(state)
+    # Stall detection — skip during startup grace, measured from the
+    # wall-clock `started_at` timestamp (survives driver restarts, unlike a
+    # time.monotonic() deadline computed once inside a blocking loop).
+    started_epoch = _parse_iso_epoch(ms.get("started_at"))
+    in_startup_grace = started_epoch is not None and (time.time() - started_epoch) < STARTUP_GRACE_SECONDS
+    if in_startup_grace:
+        return
 
-            if not progress_advanced and time_since_progress > stall_threshold:
-                log.warning(
-                    "[%s] STALL detected: %d items, %.1fh since last progress (threshold %.1fh)",
-                    slug, count_now, time_since_progress / 3600, stall_threshold / 3600,
-                )
-                proc.terminate()
-                proc.wait()
-                ms["run_pid"] = None
-                _save_state(state)
-                return "STALL"
+    stall_threshold = _stall_threshold(slug, ms)
+    count_now = _read_processed_count(slug)
+    pf = _progress_file(slug)
+    mtime_now = pf.stat().st_mtime if pf.exists() else (ms.get("last_progress_mtime") or time.time())
 
-    # Shutdown signal: leave child running; it will be reattached on restart
-    log.info("[%s] Shutdown — leaving child pid=%d running", slug, proc.pid)
-    return "SHUTDOWN"
+    progress_advanced = count_now > ms.get("last_processed_count", 0)
+    time_since_progress = time.time() - (mtime_now or time.time())
+
+    if progress_advanced:
+        ms["last_processed_count"] = count_now
+        ms["last_progress_mtime"] = mtime_now
+
+    if not progress_advanced and time_since_progress > stall_threshold:
+        log.warning(
+            "[%s] STALL detected: %d items, %.1fh since last progress (threshold %.1fh)",
+            slug, count_now, time_since_progress / 3600, stall_threshold / 3600,
+        )
+        _terminate_download(slug, pid, proc)
+        ms["run_pid"] = None
+        _handle_run_outcome(slug, ms, state, "STALL")
+
+
+def _tick_run(slug: str, ms: Dict, state: Dict) -> None:
+    """One non-blocking iteration of the RUN phase for `slug`: health-check an
+    active download, or start a fresh one if a MAX_CONCURRENT_RUNS slot is
+    free. Never blocks or sleeps — the driver's own tick interval
+    (POLL_BASE_SECONDS) provides the polling cadence, which is what lets other
+    museums keep advancing through RESEARCH/BUILD/VALIDATE/TRIAGE while this
+    one downloads in the background."""
+    if ms.get("run_pid"):
+        _run_health_check(slug, ms, state)
+        _save_state(state)
+        return
+
+    if _count_active_runs(state) >= MAX_CONCURRENT_RUNS:
+        return  # waiting for a slot; nothing new to log every tick
+
+    _start_download(slug, ms, state)
+    _save_state(state)
 
 
 def _handle_run_outcome(slug: str, ms: Dict, state: Dict, outcome: str) -> None:
     """Apply restart ladder based on run outcome."""
     if outcome == "DONE":
         _transition(ms, "DONE", "clean exit + end-of-collection confirmed")
+        notify(f"ArtServe DONE — {slug}", f"{slug} finished downloading (processed {ms.get('last_processed_count', 0)} items).")
         return
-
-    if outcome == "SHUTDOWN":
-        return  # don't change phase; resume on next driver start
 
     if outcome == "DISK_FULL":
         escalate(ms, "Disk space below minimum threshold — free space and resume", extra="", category="quick-remote")
@@ -913,12 +1222,15 @@ def _handle_run_outcome(slug: str, ms: Dict, state: Dict, outcome: str) -> None:
     if not rung_1_exhausted:
         log.info("[%s] %s — rung 1 restart (attempt %d/%d)", slug, outcome, restart_count, MAX_RESTART_ATTEMPTS)
         _note(ms, f"Rung 1 restart after {outcome}")
-        # Stay in RUN phase; next loop iteration will restart
+        # Stay in RUN phase; next tick's _tick_run will start a fresh download
     elif not rung_2_exhausted:
         # Rung 2: increase rate delay
-        current = ms.get("rate_override") or _MUSEUM_RATE_SECONDS.get(slug, 2.0)
+        current = ms.get("rate_override") or _museum_base_rate(slug)
         ms["rate_override"] = round(current * RATE_BACKOFF_MULTIPLIER, 2)
-        log.info("[%s] %s — rung 2: rate backoff to %.1fs/item", slug, outcome, ms["rate_override"])
+        log.info(
+            "[%s] %s — rung 2: rate backoff to %.1fs/item (%s)",
+            slug, outcome, ms["rate_override"], _museum_rate_limit_env_var(slug),
+        )
         _note(ms, f"Rung 2 rate backoff to {ms['rate_override']}s after {outcome}")
     elif triage_count < MAX_TRIAGE_ATTEMPTS:
         _transition(ms, "TRIAGE", f"after {outcome} ({restart_count} restarts)")
@@ -954,8 +1266,21 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
 
     prior_notes = "\n".join(ms["notes"][-15:])
     run_exit = _read_run_exit(slug)
+    prior_failure_note = _prior_failure_note(ms, "TRIAGE")
+
+    verify = ms.get("last_verify_output") or {}
+    verify_section = ""
+    if verify.get("stdout") or verify.get("stderr"):
+        verify_section = (
+            f"Verifier output (exit {verify.get('exit_code')}):\n"
+            f"stdout:\n{verify.get('stdout', '')}\n"
+        )
+        if verify.get("stderr"):
+            verify_section += f"stderr:\n{verify.get('stderr')}\n"
+        verify_section += "\n"
 
     prompt = (
+        f"{prior_failure_note}"
         f"TRIAGE task for ArtServe museum: {slug}\n\n"
         f"ISOLATION: your current directory is a throwaway git worktree, not the main checkout —\n"
         f"it is a fully independent, complete copy of the repo at its own commit. Do everything\n"
@@ -970,6 +1295,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
         f"  - Exit code: {run_exit}\n"
         f"  - Processed count: {count}\n"
         f"  - Elapsed: {elapsed_h:.1f}h\n\n"
+        f"{verify_section}"
         f"Prior attempts:\n{prior_notes}\n\n"
         f"Research document:\n{research_text[:3000]}\n\n"
         f"Allowed files to modify:\n"
@@ -993,13 +1319,16 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     ]
 
     ms["attempts"]["triage"] += 1
-    log.info("[%s] Starting TRIAGE agent (attempt %d)", slug, ms["attempts"]["triage"])
+    attempt = ms["attempts"]["triage"]
+    log.info("[%s] Starting TRIAGE agent (attempt %d)", slug, attempt)
+    log_file = _agent_log_file(slug, "triage", attempt)
 
     try:
-        proc = subprocess.Popen(cmd, cwd=run_cwd)
-        ms["agent_pid"] = proc.pid
-        _save_state(state)
-        proc.wait()
+        with log_file.open("w") as fh:
+            proc = subprocess.Popen(cmd, cwd=run_cwd, stdout=fh, stderr=subprocess.STDOUT)
+            ms["agent_pid"] = proc.pid
+            _save_state(state)
+            proc.wait()
         ms["agent_pid"] = None
         rc = proc.returncode
     except Exception as exc:
@@ -1007,18 +1336,17 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
         ms["agent_pid"] = None
         if wt_path:
             _remove_agent_worktree(wt_path)
+        _record_agent_failure(ms, "TRIAGE", attempt, log_file)
         return False
 
     # Audit changed files against the isolated worktree — never PROJECT_ROOT
     # directly, which could be dirty from unrelated concurrent work
     all_ok, changed, forbidden = _allowed_files_changed(slug, cwd=run_cwd)
     if not all_ok:
-        log.error("[%s] TRIAGE touched forbidden files: %s", slug, forbidden)
-        _log_forbidden_file_diagnostics(slug, run_cwd, forbidden)
-        if wt_path:
-            log.error("[%s] Worktree left in place for inspection: %s", slug, wt_path)
-        escalate(ms, f"TRIAGE agent touched forbidden files: {forbidden}", category="quick-remote")
-        return False
+        changed, ok = _handle_forbidden_files(slug, ms, "TRIAGE", run_cwd, wt_path, changed, forbidden)
+        if not ok:
+            _record_agent_failure(ms, "TRIAGE", attempt, log_file)
+            return False
 
     if wt_path:
         _sync_worktree_changes(wt_path, changed)
@@ -1028,12 +1356,14 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     verdict_file = _triage_verdict_file(slug)
     if not verdict_file.exists():
         log.error("[%s] TRIAGE did not write triage_verdict.json", slug)
+        _record_agent_failure(ms, "TRIAGE", attempt, log_file)
         return False
 
     try:
         verdict = json.loads(verdict_file.read_text())
     except Exception as exc:
         log.error("[%s] Could not parse triage_verdict.json: %s", slug, exc)
+        _record_agent_failure(ms, "TRIAGE", attempt, log_file)
         return False
 
     _note(ms, f"TRIAGE verdict={verdict.get('verdict')} hypothesis={verdict.get('hypothesis','')[:100]}")
@@ -1046,6 +1376,7 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
     verifier_status = _validate(slug, ms)
     if verifier_status != "PASS":
         log.error("[%s] Triage claimed fixed but verifier says %s", slug, verifier_status)
+        _record_agent_failure(ms, "TRIAGE", attempt, log_file)
         return False
 
     log.info("[%s] TRIAGE fix confirmed by verifier", slug)
@@ -1057,120 +1388,24 @@ def _triage(slug: str, ms: Dict, state: Dict) -> bool:
 # ---------------------------------------------------------------------------
 
 def _pick_active(state: Dict) -> Optional[str]:
-    """Return slug of the first museum that still needs work."""
+    """Return slug of the first museum that needs a synchronous state-machine
+    step (RESEARCH/BUILD/VALIDATE/TRIAGE). Museums in RUN are deliberately
+    excluded — the driver's per-tick health-check pass (_tick_run) advances
+    those independently and non-blockingly, so a multi-day download doesn't
+    stall the rest of the queue. A museum with a future `next_eligible_at`
+    (e.g. VALIDATE INCONCLUSIVE backoff) is skipped without blocking the
+    driver — other museums keep advancing until its backoff expires."""
+    now = time.time()
     for slug in state.get("queue", []):
         ms = state["museums"].get(slug, {})
-        if ms.get("phase") not in ("DONE", "NEEDS_HUMAN") and not ms.get("needs_human"):
-            return slug
+        phase = ms.get("phase")
+        if phase in ("DONE", "NEEDS_HUMAN", "RUN") or ms.get("needs_human"):
+            continue
+        next_eligible = ms.get("next_eligible_at")
+        if next_eligible and now < next_eligible:
+            continue
+        return slug
     return None
-
-
-def _check_prior_run(slug: str, ms: Dict) -> Optional[str]:
-    """
-    Called at the start of a RUN step to handle driver-restart scenarios.
-
-    Returns:
-      None        — no prior run in progress; start fresh
-      "DONE"      — prior run finished cleanly; go to DONE
-      "CRASH"     — prior run crashed; apply restart ladder
-      "reattach"  — prior child is still alive; caller should call _poll_existing_pid
-    """
-    pid = ms.get("run_pid")
-    if not pid:
-        return None
-
-    if _pid_alive(pid):
-        log.info("[%s] Driver restarted — existing child pid=%d still alive; reattaching", slug, pid)
-        return "reattach"
-
-    # Child is gone
-    exit_code = _read_run_exit(slug)
-    if exit_code is None:
-        log.warning("[%s] Child pid=%d gone with no exit marker — treating as CRASH", slug, pid)
-        ms["run_pid"] = None
-        return "CRASH"
-
-    ms["run_pid"] = None
-    if exit_code == 0:
-        summary = _read_run_summary(slug)
-        if summary and summary.get("reached_end_of_collection") and summary.get("total_processed", 0) > 0:
-            return "DONE"
-        log.warning("[%s] Exit 0 but run_summary missing end-of-collection flag", slug)
-        return "CRASH"
-
-    log.error("[%s] Child exited with code %d", slug, exit_code)
-    return "CRASH"
-
-
-def _poll_existing_pid(slug: str, pid: int, ms: Dict, state: Dict) -> str:
-    """
-    Poll a download subprocess that was started by a previous driver incarnation.
-    Uses _pid_alive() + run_exit.json instead of a subprocess.Popen object.
-
-    Returns same outcome strings as _run_download.
-    """
-    stall_threshold = _stall_threshold(slug, ms)
-    poll_interval = min(stall_threshold // 4, POLL_BASE_SECONDS * 5)
-    startup_deadline = (
-        time.monotonic() + STARTUP_GRACE_SECONDS
-        if ms.get("last_processed_count", 0) == 0
-        else time.monotonic()
-    )
-
-    log.info("[%s] Polling existing pid=%d (stall threshold=%.1fh)", slug, pid, stall_threshold / 3600)
-
-    while not _shutdown:
-        time.sleep(poll_interval)
-
-        if not _pid_alive(pid):
-            exit_code = _read_run_exit(slug)
-            ms["run_pid"] = None
-            _save_state(state)
-            if exit_code is None or exit_code != 0:
-                return "CRASH"
-            summary = _read_run_summary(slug)
-            if summary and summary.get("reached_end_of_collection") and summary.get("total_processed", 0) > 0:
-                return "DONE"
-            return "CRASH"
-
-        if not _disk_ok():
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            ms["run_pid"] = None
-            _save_state(state)
-            return "DISK_FULL"
-
-        if time.monotonic() > startup_deadline:
-            count_now = _read_processed_count(slug)
-            mtime_now = (
-                _progress_file(slug).stat().st_mtime
-                if _progress_file(slug).exists()
-                else ms.get("last_progress_mtime", time.time())
-            )
-            time_since = time.time() - (mtime_now or time.time())
-
-            if count_now > ms.get("last_processed_count", 0):
-                ms["last_processed_count"] = count_now
-                ms["last_progress_mtime"] = mtime_now
-                _save_state(state)
-
-            if time_since > stall_threshold:
-                log.warning(
-                    "[%s] STALL: %d items, %.1fh since last write (threshold %.1fh)",
-                    slug, count_now, time_since / 3600, stall_threshold / 3600,
-                )
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                ms["run_pid"] = None
-                _save_state(state)
-                return "STALL"
-
-    log.info("[%s] Shutdown — leaving child pid=%d running", slug, pid)
-    return "SHUTDOWN"
 
 
 def step(slug: str, state: Dict) -> None:
@@ -1181,8 +1416,13 @@ def step(slug: str, state: Dict) -> None:
     if phase == "RESEARCH":
         ok = _research(slug, ms, state)
         if ok:
-            _transition(ms, "BUILD", "research doc written")
-        else:
+            if _check_credential_gate(slug, ms):
+                _transition(ms, "BUILD", "research doc written")
+            # else: _check_credential_gate already escalated (can-wait)
+        elif not ms.get("needs_human"):
+            # _research() already escalated internally (e.g. forbidden files) if
+            # needs_human is set — avoid a second escalation/ntfy push for the
+            # same failure.
             if ms["attempts"]["research"] >= 2:
                 escalate(ms, "RESEARCH agent failed twice", category="needs-focus")
             else:
@@ -1192,7 +1432,7 @@ def step(slug: str, state: Dict) -> None:
         ok = _build(slug, ms, state)
         if ok:
             _transition(ms, "VALIDATE", "museum file created")
-        else:
+        elif not ms.get("needs_human"):
             if ms["attempts"]["build"] >= 2:
                 escalate(ms, "BUILD agent failed twice", category="needs-focus")
             else:
@@ -1202,26 +1442,32 @@ def step(slug: str, state: Dict) -> None:
         ms["attempts"]["validate"] += 1
         result = _validate(slug, ms)
         if result == "PASS":
+            ms["attempts"]["validate_inconclusive"] = 0
             _transition(ms, "RUN", "verifier PASS")
         elif result == "INCONCLUSIVE":
-            log.warning("[%s] Verifier INCONCLUSIVE — will retry", slug)
-            _note(ms, "Verifier INCONCLUSIVE (network?)")
-            time.sleep(300)  # wait 5 min before retrying
+            count = ms["attempts"].get("validate_inconclusive", 0) + 1
+            ms["attempts"]["validate_inconclusive"] = count
+            if count >= MAX_VALIDATE_INCONCLUSIVE:
+                escalate(
+                    ms,
+                    f"Verifier INCONCLUSIVE {count} times in a row — network or API outage?",
+                    category="can-wait",
+                )
+            else:
+                log.warning("[%s] Verifier INCONCLUSIVE (%d/%d) — will retry", slug, count, MAX_VALIDATE_INCONCLUSIVE)
+                _note(ms, f"Verifier INCONCLUSIVE ({count}/{MAX_VALIDATE_INCONCLUSIVE}, network?)")
+                # Non-blocking backoff — other museums keep advancing in the
+                # meantime; see _pick_active.
+                ms["next_eligible_at"] = time.time() + 300
         else:
+            ms["attempts"]["validate_inconclusive"] = 0
             log.error("[%s] Verifier FAIL — going to TRIAGE", slug)
             _transition(ms, "TRIAGE", "verifier FAIL after BUILD")
 
     elif phase == "RUN":
-        prior = _check_prior_run(slug, ms)
-        if prior == "reattach":
-            outcome = _poll_existing_pid(slug, ms["run_pid"], ms, state)
-        elif prior in ("DONE", "CRASH"):
-            outcome = prior
-        else:
-            outcome = _run_download(slug, ms, state)
-
-        if outcome != "SHUTDOWN":
-            _handle_run_outcome(slug, ms, state, outcome)
+        # Non-blocking: health-check an active download or start a fresh one
+        # (subject to MAX_CONCURRENT_RUNS). See _tick_run.
+        _tick_run(slug, ms, state)
 
     elif phase == "TRIAGE":
         fixed = _triage(slug, ms, state)
@@ -1229,7 +1475,9 @@ def step(slug: str, state: Dict) -> None:
             # Reset restart counter so it gets fresh rung-1 attempts
             ms["attempts"]["restart"] = 0
             _transition(ms, "RUN", "triage fix verified")
-        else:
+        elif not ms.get("needs_human"):
+            # _triage() already escalated internally (forbidden files, or a
+            # cannot_fix verdict) if needs_human is set.
             if ms["attempts"]["triage"] >= MAX_TRIAGE_ATTEMPTS:
                 escalate(ms, f"Exhausted {MAX_TRIAGE_ATTEMPTS} triage attempts", category="needs-focus")
 
@@ -1239,33 +1487,82 @@ def step(slug: str, state: Dict) -> None:
     _save_state(state)
 
 
+_DIRTY_TREE_WARN_PREFIXES = ("src/", "main.py", "scripts/", "docs/", "tests/")
+
+
+def _warn_if_dirty_tree() -> None:
+    """Log a one-time warning if PROJECT_ROOT has uncommitted changes under
+    paths agents read/write from — this is exactly the condition that produces
+    the identical-diff false positives _handle_forbidden_files filters out
+    downstream. Not an escalation: the driver still runs fine, but every
+    RESEARCH/BUILD/TRIAGE agent worktree branches from this dirty HEAD until
+    it's committed or discarded."""
+    rc, out, _ = _run_cmd_capture(["git", "status", "--porcelain"], cwd=PROJECT_ROOT)
+    if rc != 0:
+        return
+    dirty = [
+        line[3:] for line in out.splitlines()
+        if line[3:].startswith(_DIRTY_TREE_WARN_PREFIXES)
+    ]
+    if dirty:
+        log.warning(
+            "PROJECT_ROOT has %d uncommitted change(s) under agent-scoped paths: %s — "
+            "agent worktrees branch from this dirty HEAD, which can produce spurious "
+            "'touched forbidden files' escalations. Commit or discard before running.",
+            len(dirty), dirty,
+        )
+
+
 def driver_loop() -> None:
-    """Main blocking loop — runs until all museums are DONE/NEEDS_HUMAN or SIGTERM."""
+    """Main loop — runs until all museums are DONE/NEEDS_HUMAN or SIGTERM.
+
+    Each tick does two things:
+      1. Health-check (or start, subject to MAX_CONCURRENT_RUNS) every museum
+         currently in RUN. These calls never block — see _tick_run.
+      2. Advance exactly one non-RUN museum through its next synchronous
+         state-machine step (RESEARCH/BUILD/VALIDATE/TRIAGE invoke agents and
+         share the repo/worktree infrastructure, so those stay serial).
+
+    This is what lets a multi-day download run in the background while the
+    rest of the queue keeps moving, instead of blocking the whole driver on
+    one museum's RUN phase.
+    """
     log.info("ArtServe museum loop driver starting")
+    _warn_if_dirty_tree()
     while not _shutdown:
         state = _load_state()
-        slug = _pick_active(state)
+        queue = state.get("queue", [])
 
-        if slug is None:
-            total = len(state.get("queue", []))
-            done = sum(1 for s in state.get("queue", [])
+        for slug in queue:
+            ms = state["museums"].get(slug)
+            if ms and ms.get("phase") == "RUN":
+                _tick_run(slug, ms, state)
+            if _shutdown:
+                break
+
+        if _shutdown:
+            break
+
+        active_slug = _pick_active(state)
+        if active_slug is None:
+            total = len(queue)
+            done = sum(1 for s in queue
                        if state["museums"].get(s, {}).get("phase") in ("DONE", "NEEDS_HUMAN"))
             if total == 0:
                 log.info("Queue is empty — nothing to do. Add museums with: loop.py add <slug>")
             elif done == total:
                 log.info("All %d museums are DONE or NEEDS_HUMAN — loop complete", total)
-            else:
-                log.info("No active museums — waiting 60s")
-            if _shutdown:
                 break
-            time.sleep(60)
-            continue
-
-        log.info("[%s] Active — phase=%s", slug, state["museums"][slug]["phase"])
-        step(slug, state)
+            # else: everything active this tick is in RUN (already
+            # health-checked above) or backed off (next_eligible_at) —
+            # nothing more to do until one of them concludes or is eligible.
+        else:
+            log.info("[%s] Active — phase=%s", active_slug, state["museums"][active_slug]["phase"])
+            step(active_slug, state)
 
         if _shutdown:
             break
+        time.sleep(POLL_BASE_SECONDS)
 
     log.info("Driver loop exiting")
 
@@ -1315,6 +1612,7 @@ def cmd_resume(args) -> None:
     target_phase = args.from_phase or ms["phase"]
     ms["needs_human"] = False
     ms["phase"] = target_phase.upper()
+    ms["next_eligible_at"] = None  # clear any leftover non-blocking backoff
     _note(ms, f"Manual resume to {target_phase}")
     _save_state(state)
     print(f"Resumed {slug} at phase {target_phase}")
