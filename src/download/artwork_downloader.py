@@ -17,6 +17,7 @@ from ..museums.cma import CMAProgressTracker
 from ..museums.schemas import ArtworkMetadata
 from .progress_tracker import BaseProgressTracker, ProgressState
 from ..utils import setup_logging
+from .jev_scoring import score_batch
 
 # Import quality scoring from shared package
 from artserve_shared.quality_scoring import (
@@ -393,6 +394,7 @@ class ArtworkDownloader:
 
         try:
             self.logger.progress(f"Processing batch of {len(batch_buffer)} artworks...")
+            score_batch(artwork_repo, batch_buffer, self.settings, self.logger)
             artwork_repo.bulk_create_or_update(batch_buffer, commit=True)
             self.logger.progress(f"Successfully committed batch of {len(batch_buffer)} artworks")
 

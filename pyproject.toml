@@ -29,6 +29,8 @@ dependencies = [
     "python-dotenv>=0.21.0",
     # MacOS (for wallpaper script)
     "artserve-shared",
+    # Jev display-suitability judgments (artserve_shared.display_judgment)
+    "typesafe-sdk>=0.7.2",
     "psycopg2-binary>=2.9.11",
 ]
 

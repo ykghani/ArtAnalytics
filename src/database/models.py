@@ -96,6 +96,14 @@ class Artwork(Base):
     quality_scores = Column(JSON)  # Display-specific quality scores: {"macbook_14": 85, "firetv_4k": 92, ...}
     quality_score = Column(Integer)  # Backward compatibility: average of all display scores
 
+    # Jev display-suitability judgments (text-metadata only). NULL jev_scored_at = unjudged.
+    jev_flat_display_p = Column(Float)  # P(flat 2D display art), 0..1
+    jev_fragment_p = Column(Float)  # P(fragment/damaged), 0..1
+    jev_attribution = Column(String(30))  # named_artist, unknown, ...
+    jev_appeal = Column(Float)  # expected appeal level, 1..5
+    jev_model = Column(String(50))  # resolved model id, e.g. jev-1.13.0
+    jev_scored_at = Column(DateTime)
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
