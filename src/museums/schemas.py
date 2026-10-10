@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional, Dict, List, Any, TYPE_CHECKING
 from urllib.parse import urljoin
 
@@ -125,6 +126,14 @@ class ArtworkMetadata:
     image_pixel_height: Optional[int] = None
     quality_scores: Optional[Dict[str, int]] = None  # Display-specific quality scores
     quality_score: Optional[int] = None  # Backward compatibility: average of all display scores
+
+    # Jev display-suitability judgments (attached just before persisting; None = unjudged)
+    jev_flat_display_p: Optional[float] = None
+    jev_fragment_p: Optional[float] = None
+    jev_attribution: Optional[str] = None
+    jev_appeal: Optional[float] = None
+    jev_model: Optional[str] = None
+    jev_scored_at: Optional[datetime] = None
 
 
 class ArtworkMetadataFactory(ABC):

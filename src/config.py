@@ -435,6 +435,13 @@ class Settings(BaseSettings):
     # Museum-specific directories
     museum_dirs: Dict[str, Path] = Field(default_factory=dict)
 
+    # Jev display-suitability scoring (judges each new artwork from its metadata at ingest).
+    # Scoring is skipped when typesafe_api_key is unset; failures never block ingest.
+    typesafe_api_key: Optional[str] = Field(default=None, env="TYPESAFE_API_KEY")
+    jev_scoring_enabled: bool = Field(default=True, env="JEV_SCORING_ENABLED")
+    jev_model: str = Field(default="jev-latest", env="JEV_MODEL")
+    jev_concurrency: int = Field(default=25, env="JEV_CONCURRENCY")
+
     # Download Configuration
     batch_size: int = Field(default=100, env="BATCH_SIZE")
     rate_limit_delay: float = Field(default=1.0, env="RATE_LIMIT_DELAY")

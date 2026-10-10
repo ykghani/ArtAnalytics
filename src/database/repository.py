@@ -93,9 +93,47 @@ class ArtworkRepository:
         artwork.image_pixel_height = metadata.image_pixel_height
         artwork.quality_scores = metadata.quality_scores
         artwork.quality_score = metadata.quality_score
+        self._apply_judgments(artwork, metadata)
 
         self.session.commit()
         return artwork
+
+    JEV_FIELDS = (
+        "jev_flat_display_p",
+        "jev_fragment_p",
+        "jev_attribution",
+        "jev_appeal",
+        "jev_model",
+        "jev_scored_at",
+    )
+
+    @classmethod
+    def _apply_judgments(cls, artwork: Artwork, metadata: ArtworkMetadata) -> None:
+        """Copy Jev judgments onto the row only when metadata carries a fresh one.
+
+        A re-download produces metadata without judgments; that must not erase a
+        judgment already stored for the row.
+        """
+        if metadata.jev_scored_at is None:
+            return
+        for field_name in cls.JEV_FIELDS:
+            setattr(artwork, field_name, getattr(metadata, field_name))
+
+    def get_judged_original_ids(self, museum_code: str, original_ids: List[str]) -> set[str]:
+        """Return the subset of original_ids that already have a stored Jev judgment."""
+        if not original_ids:
+            return set()
+        rows = (
+            self.session.query(Artwork.original_id)
+            .join(Museum, Museum.id == Artwork.museum_id)
+            .filter(
+                Museum.code == museum_code,
+                Artwork.original_id.in_(original_ids),
+                Artwork.jev_scored_at.isnot(None),
+            )
+            .all()
+        )
+        return {r[0] for r in rows}
 
     def bulk_create_or_update(
         self,
@@ -215,6 +253,7 @@ class ArtworkRepository:
             artwork.image_pixel_height = metadata.image_pixel_height
             artwork.quality_scores = metadata.quality_scores
             artwork.quality_score = metadata.quality_score
+            self._apply_judgments(artwork, metadata)
 
             results.append(artwork)
 

@@ -140,7 +140,7 @@ def migrate(force_update: bool = False, museum_code: str = None):
         offset = 0
 
         def _row_dict(src_artwork: Artwork, dst_museum_id: int) -> dict:
-            return dict(
+            row = dict(
                 museum_id=dst_museum_id,
                 original_id=src_artwork.original_id,
                 accession_number=src_artwork.accession_number,
@@ -189,6 +189,19 @@ def migrate(force_update: bool = False, museum_code: str = None):
                 created_at=src_artwork.created_at,
                 updated_at=src_artwork.updated_at,
             )
+            # Carry Jev judgments only when the source has one, so --force-update never
+            # overwrites a judgment the Backend scored lazily with NULL.
+            if src_artwork.jev_scored_at is not None:
+                for jev_field in (
+                    "jev_flat_display_p",
+                    "jev_fragment_p",
+                    "jev_attribution",
+                    "jev_appeal",
+                    "jev_model",
+                    "jev_scored_at",
+                ):
+                    row[jev_field] = getattr(src_artwork, jev_field)
+            return row
 
         while True:
             batch = (
